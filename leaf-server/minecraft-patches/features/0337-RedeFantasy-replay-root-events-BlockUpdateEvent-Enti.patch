@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RedeFantasy <dev@redefantasy.com>
+Date: Tue, 4 Aug 2026 16:33:37 -0300
+Subject: [PATCH] RedeFantasy - replay root events (BlockUpdateEvent /
+ EntityMetadataUpdateEvent)
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 52d06fcfa3600a9313c7c6ab4ef20ae3a291fb17..11ca43e838f86115925a43424230029b4426a573 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1931,6 +1931,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             for (ServerLevel serverLevel : this.getAllLevels()) {
+                 serverLevel.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
+                 serverLevel.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
++                serverLevel.replayRecordBlocks = com.redefantasy.server.event.BlockUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (blocks)
++                serverLevel.replayRecordEntities = com.redefantasy.server.event.EntityMetadataUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (entities)
+                 serverLevel.updateLagCompensationTick(); // Paper - lag compensation
+                 net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
+                 serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index 9e12f50d758af4a22db0135a0960878568268311..fd5a7c196056d0be7db1b260f2d48786da6421d5 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -428,6 +428,11 @@ public class ServerEntity {
+         if (list != null) {
+             this.trackedDataValues = entityData.getNonDefaultValues();
+             this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityDataPacket(this.entity.getId(), list));
++            // RedeFantasy start - replay EntityMetadataUpdateEvent (non-async tracker / Citizens path; main thread)
++            if (this.entity.level() instanceof ServerLevel replayLevel && replayLevel.replayRecordEntities) {
++                new com.redefantasy.server.event.EntityMetadataUpdateEvent(this.entity.getBukkitEntity()).callEvent();
++            }
++            // RedeFantasy end - replay EntityMetadataUpdateEvent
+         }
+         // Leaf - Multithreaded tracker - diff on change
+ 
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 0e382269d5c0ae85ccf424104e9fb404d9cc8ce0..1f12cf3b9e7f58813091a649f0aea0ec28cc8e19 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -234,6 +234,8 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     public final net.minecraft.server.level.progress.LevelLoadListener levelLoadListener;
+     public boolean hasPhysicsEvent = true; // Paper - BlockPhysicsEvent
+     public boolean hasEntityMoveEvent; // Paper - Add EntityMoveEvent
++    public volatile boolean replayRecordBlocks; // RedeFantasy - replay recording gate (BlockUpdateEvent)
++    public volatile boolean replayRecordEntities; // RedeFantasy - replay recording gate (EntityMetadataUpdateEvent)
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
+     final List<ServerPlayer> realPlayers; // Leaves - skip
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 43b5506797a52fb954a60301d41d72591427abfe..0c1bfe584c8b3b6f28687cd00da1c022d26681be 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -526,6 +526,16 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+                         }
+                     }
+ 
++                    // RedeFantasy start - replay BlockUpdateEvent (fire at the single committed-write choke point)
++                    if (this.level instanceof ServerLevel replayLevel && replayLevel.replayRecordBlocks && !replayLevel.captureBlockStates) {
++                        new com.redefantasy.server.event.BlockUpdateEvent(
++                            org.bukkit.craftbukkit.block.CraftBlock.at(replayLevel, pos),
++                            blockState.createCraftBlockData(),
++                            state.createCraftBlockData()
++                        ).callEvent();
++                    }
++                    // RedeFantasy end - replay BlockUpdateEvent
++
+                     this.markUnsaved();
+                     return blockState;
+                 }
