@@ -17,7 +17,7 @@ index 28994a86a2609f5298a84193e54ee89d292cc03f..ba71288526fdf958398b1b2f21e9f48e
                  net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
                  serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 7cd1777438fb393cc2edfbe74f273c7f1c15e586..839045406ae8a9a56c1cf8ead7ceafc999fa7ed6 100644
+index e8c4b0b8b4849aa7cd130ed2e06a30bbed4e8586..c1111e56a9aee2fab76dee7e3303188f3dacc989 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -237,6 +237,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -35,6 +35,18 @@ index 7cd1777438fb393cc2edfbe74f273c7f1c15e586..839045406ae8a9a56c1cf8ead7ceafc9
 +        // RedeFantasy start - replay LevelSoundEvent (root capture of server-sent sounds)
 +        if (this.replayRecordSounds) {
 +            new com.redefantasy.server.event.LevelSoundEvent(this.getWorld(), sound.value().location().toString(), org.bukkit.SoundCategory.valueOf(source.name()), x, y, z, volume, pitch, seed).callEvent();
++        }
++        // RedeFantasy end - replay LevelSoundEvent
+         this.server
+             .getPlayerList()
+             .broadcast(
+@@ -2073,6 +2079,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     public void playSeededSound(
+         @Nullable Entity entity, Entity sourceEntity, Holder<SoundEvent> sound, SoundSource source, float volume, float pitch, long seed
+     ) {
++        // RedeFantasy start - replay LevelSoundEvent (entity-attached sound, captured at its position)
++        if (this.replayRecordSounds) {
++            new com.redefantasy.server.event.LevelSoundEvent(this.getWorld(), sound.value().location().toString(), org.bukkit.SoundCategory.valueOf(source.name()), sourceEntity.getX(), sourceEntity.getY(), sourceEntity.getZ(), volume, pitch, seed).callEvent();
 +        }
 +        // RedeFantasy end - replay LevelSoundEvent
          this.server
