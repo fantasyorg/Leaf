@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RedeFantasy <dev@redefantasy.com>
+Date: Tue, 4 Aug 2026 22:40:23 -0300
+Subject: [PATCH] RedeFantasy - replay LevelParticleEvent
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 7c1e8d78a930c0be43ec3c397c1e7549a32632af..28994a86a2609f5298a84193e54ee89d292cc03f 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1933,6 +1933,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                 serverLevel.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
+                 serverLevel.replayRecordBlocks = com.redefantasy.server.event.BlockUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (blocks)
+                 serverLevel.replayRecordEntities = com.redefantasy.server.event.EntityMetadataUpdateEvent.getHandlerList().getRegisteredListeners().length > 0 || com.redefantasy.server.event.EntityPositionUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (entities: metadata + position)
++                serverLevel.replayRecordParticles = com.redefantasy.server.event.LevelParticleEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (particles)
+                 serverLevel.updateLagCompensationTick(); // Paper - lag compensation
+                 net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
+                 serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..854f095ab1de0d5cc2c03cdeccae17eccad8236d 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -236,6 +236,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+     public boolean hasEntityMoveEvent; // Paper - Add EntityMoveEvent
+     public volatile boolean replayRecordBlocks; // RedeFantasy - replay recording gate (BlockUpdateEvent)
+     public volatile boolean replayRecordEntities; // RedeFantasy - replay recording gate (EntityMetadataUpdateEvent)
++    public volatile boolean replayRecordParticles; // RedeFantasy - replay recording gate (LevelParticleEvent)
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
+     final List<ServerPlayer> realPlayers; // Leaves - skip
+@@ -2426,6 +2427,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         ClientboundLevelParticlesPacket clientboundLevelParticlesPacket = new ClientboundLevelParticlesPacket(
+             options, overrideLimiter, alwaysShow, x, y, z, (float)xDist, (float)yDist, (float)zDist, (float)speed, count
+         );
++        // RedeFantasy start - replay LevelParticleEvent (root capture of server-sent particles)
++        if (this.replayRecordParticles) {
++            org.bukkit.Particle replayParticle = org.bukkit.craftbukkit.CraftParticle.minecraftToBukkit(options.getType());
++            if (replayParticle != null) {
++                new com.redefantasy.server.event.LevelParticleEvent(replayParticle, x, y, z, count, xDist, yDist, zDist, speed).callEvent();
++            }
++        }
++        // RedeFantasy end - replay LevelParticleEvent
+         int i = 0;
+ 
+         for (int i1 = 0; i1 < receivers.size(); i1++) { // Paper - particle API
