@@ -17,7 +17,7 @@ index 7c1e8d78a930c0be43ec3c397c1e7549a32632af..28994a86a2609f5298a84193e54ee89d
                  net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
                  serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..854f095ab1de0d5cc2c03cdeccae17eccad8236d 100644
+index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..7cd1777438fb393cc2edfbe74f273c7f1c15e586 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -236,6 +236,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -36,7 +36,7 @@ index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..854f095ab1de0d5cc2c03cdeccae17ec
 +        if (this.replayRecordParticles) {
 +            org.bukkit.Particle replayParticle = org.bukkit.craftbukkit.CraftParticle.minecraftToBukkit(options.getType());
 +            if (replayParticle != null) {
-+                new com.redefantasy.server.event.LevelParticleEvent(replayParticle, x, y, z, count, xDist, yDist, zDist, speed).callEvent();
++                new com.redefantasy.server.event.LevelParticleEvent(this.getWorld(), replayParticle, x, y, z, count, xDist, yDist, zDist, speed).callEvent();
 +            }
 +        }
 +        // RedeFantasy end - replay LevelParticleEvent
