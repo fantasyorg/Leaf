@@ -17,7 +17,7 @@ index 7c1e8d78a930c0be43ec3c397c1e7549a32632af..28994a86a2609f5298a84193e54ee89d
                  net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
                  serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..7cd1777438fb393cc2edfbe74f273c7f1c15e586 100644
+index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..e8c4b0b8b4849aa7cd130ed2e06a30bbed4e8586 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
 @@ -236,6 +236,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
@@ -28,15 +28,20 @@ index 4f5f3dedbd1c7d179f608885d92f02b81fc5270c..7cd1777438fb393cc2edfbe74f273c7f
      private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
      public boolean hasRidableMoveEvent = false; // Purpur - Ridables
      final List<ServerPlayer> realPlayers; // Leaves - skip
-@@ -2426,6 +2427,14 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -2426,6 +2427,19 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
          ClientboundLevelParticlesPacket clientboundLevelParticlesPacket = new ClientboundLevelParticlesPacket(
              options, overrideLimiter, alwaysShow, x, y, z, (float)xDist, (float)yDist, (float)zDist, (float)speed, count
          );
-+        // RedeFantasy start - replay LevelParticleEvent (root capture of server-sent particles)
++        // RedeFantasy start - replay LevelParticleEvent (root capture of server-sent particles, type + data)
 +        if (this.replayRecordParticles) {
-+            org.bukkit.Particle replayParticle = org.bukkit.craftbukkit.CraftParticle.minecraftToBukkit(options.getType());
-+            if (replayParticle != null) {
++            net.minecraft.network.RegistryFriendlyByteBuf replayBuffer = new net.minecraft.network.RegistryFriendlyByteBuf(io.netty.buffer.Unpooled.buffer(), this.registryAccess());
++            try {
++                net.minecraft.core.particles.ParticleTypes.STREAM_CODEC.encode(replayBuffer, options);
++                byte[] replayParticle = new byte[replayBuffer.readableBytes()];
++                replayBuffer.readBytes(replayParticle);
 +                new com.redefantasy.server.event.LevelParticleEvent(this.getWorld(), replayParticle, x, y, z, count, xDist, yDist, zDist, speed).callEvent();
++            } finally {
++                replayBuffer.release();
 +            }
 +        }
 +        // RedeFantasy end - replay LevelParticleEvent

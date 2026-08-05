@@ -1,6 +1,5 @@
 package com.redefantasy.server.event;
 
-import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.world.WorldEvent;
@@ -12,16 +11,16 @@ import org.jspecify.annotations.NullMarked;
  * These go out as {@code ClientboundLevelParticlesPacket} and have no Bukkit event, so the replay
  * recorder captures them here.
  * <p>
- * Carries the Bukkit particle type, world, position, count, per-axis spread and speed. Particle
- * data (dust colour, block state, item) is not carried — consumers get the type only. Fired on the
- * thread that owns the level, only while a listener is registered. Not cancellable.
+ * The particle (type <em>and</em> data — dust colour, block state, item…) is carried as an opaque
+ * blob serialized with the vanilla particle stream codec, so consumers keep the full effect. Fired
+ * on the thread that owns the level, only while a listener is registered. Not cancellable.
  */
 @NullMarked
 public class LevelParticleEvent extends WorldEvent {
 
     private static final HandlerList HANDLERS = new HandlerList();
 
-    private final Particle particle;
+    private final byte[] particle;
     private final double x;
     private final double y;
     private final double z;
@@ -31,7 +30,7 @@ public class LevelParticleEvent extends WorldEvent {
     private final double offsetZ;
     private final double speed;
 
-    public LevelParticleEvent(final World world, final Particle particle, final double x, final double y, final double z, final int count, final double offsetX, final double offsetY, final double offsetZ, final double speed) {
+    public LevelParticleEvent(final World world, final byte[] particle, final double x, final double y, final double z, final int count, final double offsetX, final double offsetY, final double offsetZ, final double speed) {
         super(world);
         this.particle = particle;
         this.x = x;
@@ -44,7 +43,8 @@ public class LevelParticleEvent extends WorldEvent {
         this.speed = speed;
     }
 
-    public Particle getParticle() {
+    /** The particle type + data, serialized with the vanilla particle stream codec. */
+    public byte[] getParticle() {
         return this.particle;
     }
 
