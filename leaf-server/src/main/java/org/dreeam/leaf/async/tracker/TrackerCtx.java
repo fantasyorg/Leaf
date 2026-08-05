@@ -312,7 +312,7 @@ public final class TrackerCtx {
             sendToTrackingPlayersAndSelf(tracker, packet);
             // RedeFantasy start - replay EntityMetadataUpdateEvent (async tracker main-thread commit)
             if (entity.level() instanceof net.minecraft.server.level.ServerLevel replayLevel && replayLevel.replayRecordEntities) {
-                new com.redefantasy.server.event.EntityMetadataUpdateEvent(entity.getBukkitEntity()).callEvent();
+                new com.redefantasy.server.event.EntityMetadataUpdateEvent(entity.getBukkitEntity(), com.redefantasy.server.util.ReplayMetadataSerializer.serialize(entity, replayLevel.registryAccess())).callEvent();
             }
             // RedeFantasy end - replay EntityMetadataUpdateEvent
         }

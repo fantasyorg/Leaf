@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RedeFantasy <dev@redefantasy.com>
+Date: Tue, 4 Aug 2026 23:43:01 -0300
+Subject: [PATCH] RedeFantasy - replay EntityMetadataUpdateEvent carrega
+ datawatcher serializado
+
+
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index fd5a7c196056d0be7db1b260f2d48786da6421d5..b0bb0016549ac03c43337f8fe16c861c7ca2b072 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -430,7 +430,7 @@ public class ServerEntity {
+             this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityDataPacket(this.entity.getId(), list));
+             // RedeFantasy start - replay EntityMetadataUpdateEvent (non-async tracker / Citizens path; main thread)
+             if (this.entity.level() instanceof ServerLevel replayLevel && replayLevel.replayRecordEntities) {
+-                new com.redefantasy.server.event.EntityMetadataUpdateEvent(this.entity.getBukkitEntity()).callEvent();
++                new com.redefantasy.server.event.EntityMetadataUpdateEvent(this.entity.getBukkitEntity(), com.redefantasy.server.util.ReplayMetadataSerializer.serialize(this.entity, replayLevel.registryAccess())).callEvent();
+             }
+             // RedeFantasy end - replay EntityMetadataUpdateEvent
+         }

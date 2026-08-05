@@ -6,30 +6,34 @@ import org.bukkit.event.entity.EntityEvent;
 import org.jspecify.annotations.NullMarked;
 
 /**
- * Called once per tick, per entity, whenever that entity's synchronized metadata (the
- * data-watcher) changed and is being sent to clients — e.g. TNT fuse, entity pose, creeper
- * charging/ignited, item-frame item, player sneaking/gliding/hand-active, etc.
+ * Called once per tick, per entity, whenever that entity's synchronized metadata (the data-watcher)
+ * changed and is being sent to clients. Fired at the point the dirty metadata is packed and
+ * dispatched ({@code ServerEntity#sendDirtyEntityData}, and on the async tracker its main-thread
+ * commit), on the thread that owns the entity.
  * <p>
- * This is a root, server-level observation event fired at the point the dirty metadata is
- * packed and dispatched ({@code ServerEntity#sendDirtyEntityData}, and — on the async
- * tracker — its main-thread commit). It fires on the thread that owns the entity, so
- * handlers may safely read from the entity.
+ * Carries the entity's full non-default data-watcher serialized in the vanilla entity-metadata wire
+ * format (the {@code ClientboundSetEntityDataPacket} value list, without the entity id). This lets a
+ * consumer reproduce <em>any</em> metadata generically (creeper charged, mob variants, potion-effect
+ * colour, item-frame item, pose…) without per-type code.
  * <p>
- * The event deliberately carries no raw metadata payload: the changed values are internal
- * NMS types. Consumers should read whatever they need from {@link #getEntity()} (e.g.
- * {@code ((TNTPrimed) getEntity()).getFuseTicks()}). It exists to signal <em>when</em>
- * visual state changed — the trigger that scattered gameplay events do not provide.
- * <p>
- * Fired only while the owning world is flagged as recording, so it costs nothing when
- * nobody is listening. Not cancellable.
+ * Fired only while the owning world is flagged as recording, so it costs nothing when nobody is
+ * listening. Not cancellable.
  */
 @NullMarked
 public class EntityMetadataUpdateEvent extends EntityEvent {
 
     private static final HandlerList HANDLERS = new HandlerList();
 
-    public EntityMetadataUpdateEvent(final Entity entity) {
+    private final byte[] metadata;
+
+    public EntityMetadataUpdateEvent(final Entity entity, final byte[] metadata) {
         super(entity);
+        this.metadata = metadata;
+    }
+
+    /** The full non-default data-watcher, serialized in the vanilla entity-metadata wire format. */
+    public byte[] getMetadata() {
+        return this.metadata;
     }
 
     @Override
