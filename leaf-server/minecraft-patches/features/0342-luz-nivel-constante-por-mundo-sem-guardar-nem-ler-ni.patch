@@ -1,0 +1,250 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Mon, 10 Aug 2026 00:21:49 -0300
+Subject: [PATCH] luz: nivel constante por mundo, sem guardar nem ler nibble
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mundo estatico nao precisa de motor de luz: a luz e cache derivavel dos blocos, e
+o ChunkAccess ja tem isLightCorrect pra isso. Com constant-light ligado, o
+StarLightInterface serve DataLayer compartilhadas (16 estaticas, uma por nivel) e
+o load pula a desserializacao dos nibbles, que ficam vazios. Sem nibble
+materializado, o save nao grava nada e a RAM de luz vai a zero.
+
+sky e block sao separados: o cliente atenua sky pelo horario, entao e block que
+sustenta a claridade. Desligar se auto-cura — sem as tags do starlight no NBT o
+chunk e reiluminado no proximo load.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
+
+diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
+index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b9ba8ea8a 100644
+--- a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
++++ b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
+@@ -66,6 +66,44 @@ public final class StarLightInterface {
+     private final boolean hasBlockLight;
+     private final boolean hasSkyLight;
+ 
++    // RedeFantasy start - constant light
++    /** Identifica no heap dump qual build de luz constante esta rodando. */
++    public static final String CONSTANT_LIGHT_BUILD_TAG = "RedeFantasy-constant-light-guards-v11-serializable";
++
++    private static final DataLayer[] CONSTANT_LIGHT_LAYERS = new DataLayer[16];
++    static {
++        for (int level = 0; level < CONSTANT_LIGHT_LAYERS.length; ++level) {
++            final DataLayer layer = new DataLayer(level);
++            if (level != 0) {
++                // materializa o array uma vez; ele e compartilhado por todas as secoes e so pode ser lido
++                layer.getData();
++            }
++            CONSTANT_LIGHT_LAYERS[level] = layer;
++        }
++    }
++
++    /**
++     * Luz fixa deste mundo, ou {@code null} quando a luz e a calculada pelo motor. Lida a cada
++     * chamada para acompanhar reload de config e para nao depender da ordem de construcao do mundo.
++     */
++    private org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight() {
++        if (this.world == null || this.isClientSide) {
++            return null;
++        }
++
++        final org.galemc.gale.configuration.GaleWorldConfiguration galeConfig = this.world.galeConfig();
++        if (galeConfig == null || galeConfig.constantLight == null || !galeConfig.constantLight.enabled) {
++            return null;
++        }
++
++        return galeConfig.constantLight;
++    }
++
++    private static int clampLightLevel(final int level) {
++        return Math.max(0, Math.min(15, level));
++    }
++    // RedeFantasy end - constant light
++
+     public StarLightInterface(final LightChunkGetter lightAccess, final boolean hasSkyLight, final boolean hasBlockLight, final LevelLightEngine lightEngine) {
+         this.lightAccess = lightAccess;
+         this.world = lightAccess == null ? null : (Level)lightAccess.getLevel();
+@@ -120,6 +158,17 @@ public final class StarLightInterface {
+ 
+             @Override
+             public DataLayer getDataLayerData(final SectionPos pos) {
++                // RedeFantasy start - constant light
++                final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = StarLightInterface.this.constantLight();
++                if (constantLight != null) {
++                    final int constantSectionY = pos.getY();
++                    if (constantSectionY < StarLightInterface.this.minLightSection || constantSectionY > StarLightInterface.this.maxLightSection) {
++                        return null;
++                    }
++
++                    return CONSTANT_LIGHT_LAYERS[clampLightLevel(constantLight.sky)];
++                }
++                // RedeFantasy end - constant light
+                 final ChunkAccess chunk = StarLightInterface.this.getAnyChunkNow(pos.getX(), pos.getZ());
+                 if (chunk == null || (!StarLightInterface.this.isClientSide && !chunk.isLightCorrect()) || !chunk.getPersistedStatus().isOrAfter(ChunkStatus.LIGHT)) {
+                     return null;
+@@ -177,6 +226,17 @@ public final class StarLightInterface {
+ 
+             @Override
+             public DataLayer getDataLayerData(final SectionPos pos) {
++                // RedeFantasy start - constant light
++                final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = StarLightInterface.this.constantLight();
++                if (constantLight != null) {
++                    final int constantSectionY = pos.getY();
++                    if (constantSectionY < StarLightInterface.this.minLightSection || constantSectionY > StarLightInterface.this.maxLightSection) {
++                        return null;
++                    }
++
++                    return CONSTANT_LIGHT_LAYERS[clampLightLevel(constantLight.block)];
++                }
++                // RedeFantasy end - constant light
+                 final ChunkAccess chunk = StarLightInterface.this.getAnyChunkNow(pos.getX(), pos.getZ());
+ 
+                 if (chunk == null || pos.getY() < StarLightInterface.this.minLightSection || pos.getY() > StarLightInterface.this.maxLightSection) {
+@@ -224,6 +284,12 @@ public final class StarLightInterface {
+         if (!this.hasSkyLight) {
+             return 0;
+         }
++        // RedeFantasy start - constant light
++        final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = this.constantLight();
++        if (constantLight != null) {
++            return clampLightLevel(constantLight.sky);
++        }
++        // RedeFantasy end - constant light
+         final int x = blockPos.getX();
+         int y = blockPos.getY();
+         final int z = blockPos.getZ();
+@@ -294,6 +360,12 @@ public final class StarLightInterface {
+         if (!this.hasBlockLight) {
+             return 0;
+         }
++        // RedeFantasy start - constant light
++        final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = this.constantLight();
++        if (constantLight != null) {
++            return clampLightLevel(constantLight.block);
++        }
++        // RedeFantasy end - constant light
+         final int y = blockPos.getY();
+         final int cy = y >> 4;
+ 
+@@ -431,6 +503,12 @@ public final class StarLightInterface {
+     }
+ 
+     public void forceLoadInChunk(final ChunkAccess chunk, final Boolean[] emptySections) {
++        // RedeFantasy start - constant light
++        if (this.constantLight() != null) {
++            // semear as secoes vazias com sky light alocaria os nibbles que este mundo nao usa
++            return;
++        }
++        // RedeFantasy end - constant light
+         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+ 
+@@ -448,6 +526,11 @@ public final class StarLightInterface {
+     }
+ 
+     public void loadInChunk(final int chunkX, final int chunkZ, final Boolean[] emptySections) {
++        // RedeFantasy start - constant light
++        if (this.constantLight() != null) {
++            return;
++        }
++        // RedeFantasy end - constant light
+         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+ 
+@@ -465,6 +548,13 @@ public final class StarLightInterface {
+     }
+ 
+     public void lightChunk(final ChunkAccess chunk, final Boolean[] emptySections) {
++        // RedeFantasy start - constant light
++        if (this.constantLight() != null) {
++            // iluminar um chunk gerado so encheria os nibbles com dado que ninguem le. quem chama
++            // marca o chunk como iluminado por fora desta chamada, entao o status avanca igual.
++            return;
++        }
++        // RedeFantasy end - constant light
+         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+ 
+@@ -483,6 +573,21 @@ public final class StarLightInterface {
+ 
+     public void relightChunks(final Set<ChunkPos> chunks, final Consumer<ChunkPos> chunkLightCallback,
+                               final IntConsumer onComplete) {
++        // RedeFantasy start - constant light
++        if (this.constantLight() != null) {
++            // nada a reiluminar, mas quem chamou espera os callbacks para nao ficar preso
++            if (chunkLightCallback != null) {
++                for (final ChunkPos pos : chunks) {
++                    chunkLightCallback.accept(pos);
++                }
++            }
++            if (onComplete != null) {
++                onComplete.accept(chunks.size());
++            }
++
++            return;
++        }
++        // RedeFantasy end - constant light
+         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+ 
+@@ -506,6 +611,11 @@ public final class StarLightInterface {
+     }
+ 
+     public void checkSkyEdges(final int chunkX, final int chunkZ) {
++        // RedeFantasy start - constant light
++        if (this.constantLight() != null) {
++            return;
++        }
++        // RedeFantasy end - constant light
+         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+ 
+         try {
+@@ -518,6 +628,11 @@ public final class StarLightInterface {
+     }
+ 
+     public void checkBlockEdges(final int chunkX, final int chunkZ) {
++        // RedeFantasy start - constant light
++        if (this.constantLight() != null) {
++            return;
++        }
++        // RedeFantasy end - constant light
+         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+         try {
+             if (blockEngine != null) {
+@@ -624,7 +739,9 @@ public final class StarLightInterface {
+                     }
+                 }
+ 
+-                if (!litChunk) {
++                // RedeFantasy - constant light: sem luz calculada, nao ha propagacao a executar aqui.
++                // o drain de onComplete abaixo continua acontecendo, entao quem espera a tarefa nao trava.
++                if (!litChunk && this.lightEngine.constantLight() == null) {
+                     final SkyStarLightEngine skyEngine = this.lightEngine.getSkyLightEngine();
+                     final BlockStarLightEngine blockEngine = this.lightEngine.getBlockLightEngine();
+                     try {
+diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+index e27b54f9dd30b08342d7ae2779d10cfdc643ed16..d644c06b4af2cd2e36d3838374b6f97bd072df9b 100644
+--- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
++++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
+@@ -285,6 +285,17 @@ public record SerializableChunkData(
+         final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles = ca.spottedleaf.moonrise.patches.starlight.light.StarLightEngine.getFilledEmptyLight(world);
+         final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] skyNibbles = ca.spottedleaf.moonrise.patches.starlight.light.StarLightEngine.getFilledEmptyLight(world);
+ 
++        // RedeFantasy start - constant light
++        final org.galemc.gale.configuration.GaleWorldConfiguration galeConfig = world.galeConfig();
++        if (galeConfig != null && galeConfig.constantLight != null && galeConfig.constantLight.enabled) {
++            // o nivel servido e fixo, entao o dado gravado nunca seria lido: as secoes ficam vazias
++            // e nenhum byte de luz e desserializado.
++            ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)ret).starlight$setBlockNibbles(blockNibbles);
++            ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)ret).starlight$setSkyNibbles(skyNibbles);
++            return ret;
++        }
++        // RedeFantasy end - constant light
++
+         if (!this.lightCorrect) {
+             ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)ret).starlight$setBlockNibbles(blockNibbles);
+             ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)ret).starlight$setSkyNibbles(skyNibbles);
