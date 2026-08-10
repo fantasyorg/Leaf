@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
 
 diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
-index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b9ba8ea8a 100644
+index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8d8d6061a 100644
 --- a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
 +++ b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
 @@ -66,6 +66,44 @@ public final class StarLightInterface {
@@ -47,17 +47,17 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b
 +     * Luz fixa deste mundo, ou {@code null} quando a luz e a calculada pelo motor. Lida a cada
 +     * chamada para acompanhar reload de config e para nao depender da ordem de construcao do mundo.
 +     */
-+    private org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight() {
++    private io.papermc.paper.configuration.WorldConfiguration.ConstantLight constantLight() {
 +        if (this.world == null || this.isClientSide) {
 +            return null;
 +        }
 +
-+        final org.galemc.gale.configuration.GaleWorldConfiguration galeConfig = this.world.galeConfig();
-+        if (galeConfig == null || galeConfig.constantLight == null || !galeConfig.constantLight.enabled) {
++        final io.papermc.paper.configuration.WorldConfiguration paperConfig = this.world.paperConfig();
++        if (paperConfig == null || paperConfig.constantLight == null || !paperConfig.constantLight.enabled) {
 +            return null;
 +        }
 +
-+        return galeConfig.constantLight;
++        return paperConfig.constantLight;
 +    }
 +
 +    private static int clampLightLevel(final int level) {
@@ -73,7 +73,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b
              @Override
              public DataLayer getDataLayerData(final SectionPos pos) {
 +                // RedeFantasy start - constant light
-+                final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = StarLightInterface.this.constantLight();
++                final io.papermc.paper.configuration.WorldConfiguration.ConstantLight constantLight = StarLightInterface.this.constantLight();
 +                if (constantLight != null) {
 +                    final int constantSectionY = pos.getY();
 +                    if (constantSectionY < StarLightInterface.this.minLightSection || constantSectionY > StarLightInterface.this.maxLightSection) {
@@ -91,7 +91,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b
              @Override
              public DataLayer getDataLayerData(final SectionPos pos) {
 +                // RedeFantasy start - constant light
-+                final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = StarLightInterface.this.constantLight();
++                final io.papermc.paper.configuration.WorldConfiguration.ConstantLight constantLight = StarLightInterface.this.constantLight();
 +                if (constantLight != null) {
 +                    final int constantSectionY = pos.getY();
 +                    if (constantSectionY < StarLightInterface.this.minLightSection || constantSectionY > StarLightInterface.this.maxLightSection) {
@@ -109,7 +109,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b
              return 0;
          }
 +        // RedeFantasy start - constant light
-+        final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = this.constantLight();
++        final io.papermc.paper.configuration.WorldConfiguration.ConstantLight constantLight = this.constantLight();
 +        if (constantLight != null) {
 +            return clampLightLevel(constantLight.sky);
 +        }
@@ -122,7 +122,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b
              return 0;
          }
 +        // RedeFantasy start - constant light
-+        final org.galemc.gale.configuration.GaleWorldConfiguration.ConstantLight constantLight = this.constantLight();
++        final io.papermc.paper.configuration.WorldConfiguration.ConstantLight constantLight = this.constantLight();
 +        if (constantLight != null) {
 +            return clampLightLevel(constantLight.block);
 +        }
@@ -227,7 +227,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..30307931d684fbe6dc9dec4875078d0b
                      final BlockStarLightEngine blockEngine = this.lightEngine.getBlockLightEngine();
                      try {
 diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
-index e27b54f9dd30b08342d7ae2779d10cfdc643ed16..d644c06b4af2cd2e36d3838374b6f97bd072df9b 100644
+index e27b54f9dd30b08342d7ae2779d10cfdc643ed16..ebae1912c182c6897381bfce25e4948fbf2b2728 100644
 --- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
 +++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
 @@ -285,6 +285,17 @@ public record SerializableChunkData(
@@ -235,8 +235,8 @@ index e27b54f9dd30b08342d7ae2779d10cfdc643ed16..d644c06b4af2cd2e36d3838374b6f97b
          final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] skyNibbles = ca.spottedleaf.moonrise.patches.starlight.light.StarLightEngine.getFilledEmptyLight(world);
  
 +        // RedeFantasy start - constant light
-+        final org.galemc.gale.configuration.GaleWorldConfiguration galeConfig = world.galeConfig();
-+        if (galeConfig != null && galeConfig.constantLight != null && galeConfig.constantLight.enabled) {
++        final io.papermc.paper.configuration.WorldConfiguration paperConfig = world.paperConfig();
++        if (paperConfig != null && paperConfig.constantLight != null && paperConfig.constantLight.enabled) {
 +            // o nivel servido e fixo, entao o dado gravado nunca seria lido: as secoes ficam vazias
 +            // e nenhum byte de luz e desserializado.
 +            ((ca.spottedleaf.moonrise.patches.starlight.chunk.StarlightChunk)ret).starlight$setBlockNibbles(blockNibbles);

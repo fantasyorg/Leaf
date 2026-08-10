@@ -31,29 +31,6 @@ public class GaleWorldConfiguration extends ConfigurationPart {
     @Setting(Configuration.VERSION_FIELD)
     public int version = CURRENT_VERSION;
 
-    // RedeFantasy start - constant light
-    public ConstantLight constantLight;
-
-    public class ConstantLight extends ConfigurationPart {
-
-        /**
-         * Serve um nivel fixo de luz para o mundo inteiro, em vez do que o motor calculou.
-         * So faz sentido em mundo estatico, onde a luz nunca muda e nao precisa ser calculada.
-         */
-        public boolean enabled = false;
-        /**
-         * Nivel de sky light, de 0 a 15. Em 0 o pacote usa a mascara de secao vazia e nada trafega.
-         * O cliente atenua sky light conforme o horario, entao ela nao sustenta claridade constante.
-         */
-        public int sky = 0;
-        /**
-         * Nivel de block light, de 0 a 15. Nao e atenuada pelo horario, entao e ela quem define a
-         * claridade que o jogador ve.
-         */
-        public int block = 15;
-    }
-    // RedeFantasy end - constant light
-
     public SmallOptimizations smallOptimizations;
 
     public class SmallOptimizations extends ConfigurationPart {
