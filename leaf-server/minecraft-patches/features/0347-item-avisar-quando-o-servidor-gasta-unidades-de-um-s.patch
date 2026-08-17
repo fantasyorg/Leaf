@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RedeFantasy <dev@redefantasy.com>
+Date: Mon, 17 Aug 2026 16:23:41 -0300
+Subject: [PATCH] item: avisar quando o servidor gasta unidades de um stack
+
+
+diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
+index dca53271eb2deec06ff96bffeb6667387990fbdf..56e5fdbef72c57c8528773e46633dd0909459011 100644
+--- a/net/minecraft/world/item/ItemStack.java
++++ b/net/minecraft/world/item/ItemStack.java
+@@ -1442,6 +1442,16 @@ public final class ItemStack implements DataComponentHolder, net.caffeinemc.mods
+ 
+     public void consume(int amount, @Nullable LivingEntity entity) {
+         if ((entity == null || !entity.hasInfiniteMaterials()) && this != ItemStack.EMPTY) { // CraftBukkit
++            // RedeFantasy start - ItemConsumedEvent (fire where the server spends the units, before they go)
++            if (amount > 0 && com.redefantasy.server.event.ItemConsumedEvent.getHandlerList().getRegisteredListeners().length > 0) {
++                new com.redefantasy.server.event.ItemConsumedEvent(
++                    entity == null ? null : (org.bukkit.entity.LivingEntity) entity.getBukkitEntity(),
++                    org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(this),
++                    amount
++                ).callEvent();
++            }
++            // RedeFantasy end - ItemConsumedEvent
++
+             this.shrink(amount);
+         }
+     }
