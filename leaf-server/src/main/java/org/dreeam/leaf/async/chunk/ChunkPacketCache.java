@@ -38,13 +38,16 @@ public final class ChunkPacketCache {
             .build();
     }
 
-    /** O cache do mundo, ou null quando a config nao o cobre. */
+    /**
+     * O cache do mundo, ou null quando a config nao o cobre. Resolvido no primeiro uso, nao no
+     * construtor do ServerLevel: la o nome do mundo ainda nao existe (serverLevelData e nulo).
+     */
     public static @Nullable ChunkPacketCache of(ServerLevel level) {
+        if (!level.leaf$chunkPacketCacheResolved) {
+            level.leaf$chunkPacketCache = CacheChunkPackets.appliesTo(level) ? new ChunkPacketCache() : null;
+            level.leaf$chunkPacketCacheResolved = true;
+        }
         return level.leaf$chunkPacketCache;
-    }
-
-    public static @Nullable ChunkPacketCache create(ServerLevel level) {
-        return CacheChunkPackets.appliesTo(level) ? new ChunkPacketCache() : null;
     }
 
     /** O pacote guardado, ou null se este chunk ainda nao foi construido (ou foi invalidado). */
