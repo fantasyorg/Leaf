@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 03:20:46 -0300
+Subject: [PATCH] user cache: opcao pra nao carregar, anotar nem gravar o
+ usercache.json
+
+
+diff --git a/net/minecraft/server/players/CachedUserNameToIdResolver.java b/net/minecraft/server/players/CachedUserNameToIdResolver.java
+index a06275b08bc2a343260245a348958ed57fdd37d4..4119f21ab667f5c4fec0e800cd48f68b1d0e6305 100644
+--- a/net/minecraft/server/players/CachedUserNameToIdResolver.java
++++ b/net/minecraft/server/players/CachedUserNameToIdResolver.java
+@@ -54,7 +54,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
+     public CachedUserNameToIdResolver(GameProfileRepository profileRepository, File file) {
+         this.profileRepository = profileRepository;
+         this.file = file;
+-        Lists.reverse(this.load()).forEach(this::safeAdd);
++        if (org.dreeam.leaf.config.modules.misc.UserCache.enabled) Lists.reverse(this.load()).forEach(this::safeAdd); // Leaf - user cache toggle
+     }
+ 
+     private void safeAdd(CachedUserNameToIdResolver.GameProfileInfo profileInfo) {
+@@ -88,6 +88,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
+ 
+     @Override
+     public void add(NameAndId nameAndId) {
++        if (!org.dreeam.leaf.config.modules.misc.UserCache.enabled) return; // Leaf - user cache toggle
+         this.addInternal(nameAndId);
+     }
+ 
+@@ -216,6 +217,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
+     @Override
+     public void save(boolean asyncSave) {
+         // Paper end - Perf: Async GameProfileCache saving
++        if (!org.dreeam.leaf.config.modules.misc.UserCache.enabled) return; // Leaf - user cache toggle
+         JsonArray jsonArray = new JsonArray();
+         DateFormat dateFormat = createDateFormat();
+         this.listTopMRUProfiles(org.spigotmc.SpigotConfig.userCacheCap).forEach(gameProfileInfo -> jsonArray.add(writeGameProfile(gameProfileInfo, dateFormat))); // Spigot // Paper - Fix GameProfileCache concurrency
