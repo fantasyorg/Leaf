@@ -1,0 +1,228 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 17:27:12 -0300
+Subject: [PATCH] proxy tunnel: uma conexao do proxy carrega todos os jogadores
+ como streams
+
+O listener do jogo continua igual; ao lado dele sobe um listener do tunel
+(porta do jogo + 1 por padrao) que autentica o proxy pelo segredo do
+forwarding e, a cada OPEN, registra um canal virtual num event loop da rede
+e o inicializa exatamente como um socket aceito. A partir dai Connection,
+handshake, login e play nao sabem a diferenca. O que muda no fio: o proxy
+flusha o socket do tunel num timer em vez de uma vez por pacote.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012phX6RKWML9QvBFUhrM9vU
+
+diff --git a/net/minecraft/server/dedicated/DedicatedServer.java b/net/minecraft/server/dedicated/DedicatedServer.java
+index 0e77c717d3481aae5d591a08eed1eb5f1439cdbf..0182a0347866698de0b3b9ee3e77e050bf7cee6f 100644
+--- a/net/minecraft/server/dedicated/DedicatedServer.java
++++ b/net/minecraft/server/dedicated/DedicatedServer.java
+@@ -345,6 +345,11 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+ 
+         try {
+             this.getConnection().startTcpServerListener(bindAddress); // Paper - Unix domain socket support
++            // Leaf start - Proxy tunnel
++            if (org.dreeam.leaf.config.modules.network.ProxyTunnel.enabled && bindAddress instanceof java.net.InetSocketAddress inetBindAddress) {
++                this.getConnection().startTunnelListener(inetBindAddress);
++            }
++            // Leaf end - Proxy tunnel
+         } catch (IOException var11) {
+             LOGGER.warn("**** FAILED TO BIND TO PORT!");
+             LOGGER.warn("The exception was: {}", var11.toString());
+diff --git a/net/minecraft/server/network/ServerConnectionListener.java b/net/minecraft/server/network/ServerConnectionListener.java
+index 33e1cdb00d648c992af03a976899253141314b27..0fcb48d223d8fc746a83d6a08b048b040af7c9d5 100644
+--- a/net/minecraft/server/network/ServerConnectionListener.java
++++ b/net/minecraft/server/network/ServerConnectionListener.java
+@@ -80,6 +80,105 @@ public class ServerConnectionListener {
+             ServerConnectionListener.LOGGER.info("Paper: Using " + com.velocitypowered.natives.util.Natives.cipher.getLoadedVariant() + " cipher from Velocity.");
+             // Paper end - Use Velocity cipher
+ 
++            this.channels
++                .add(
++                    new ServerBootstrap()
++                        .channel(eventLoopGroupHolder.serverChannelCls())
++                        .childHandler(
++                            new ChannelInitializer<Channel>() {
++                                @Override
++                                protected void initChannel(Channel channel) {
++                                    ServerConnectionListener.this.initializeConnectionChannel(channel); // Leaf - Proxy tunnel; shared with tunnel streams
++                                }
++                            }
++                        )
++                        .group(eventLoopGroupHolder.eventLoopGroup())
++                        .localAddress(address) // Paper - Unix domain socket support
++                        .option(ChannelOption.AUTO_READ, false) // CraftBukkit
++                        .bind()
++                        .syncUninterruptibly()
++                );
++        }
++    }
++
++
++    // Leaf start - Proxy tunnel
++    /** Everything a freshly accepted player channel needs; a tunnel stream goes through the same steps. */
++    public void initializeConnectionChannel(Channel channel) {
++        try {
++            channel.config().setOption(ChannelOption.TCP_NODELAY, true);
++        } catch (ChannelException var5) {
++        }
++
++        if (!disableFlushConsolidation) channel.pipeline().addFirst(new io.netty.handler.flush.FlushConsolidationHandler()); // Paper - Optimize network
++        ChannelPipeline channelPipeline = channel.pipeline().addLast("timeout", new ReadTimeoutHandler(30));
++        if (ServerConnectionListener.this.server.repliesToStatus()) {
++            channelPipeline.addLast("legacy_query", new LegacyQueryHandler(ServerConnectionListener.this.getServer()));
++        }
++
++        Connection.configureSerialization(channelPipeline, PacketFlow.SERVERBOUND, false, null);
++        int rateLimitPacketsPerSecond = ServerConnectionListener.this.server.getRateLimitPacketsPerSecond();
++        Connection connection = (Connection)(rateLimitPacketsPerSecond > 0
++            ? new RateKickingConnection(rateLimitPacketsPerSecond)
++            : new Connection(PacketFlow.SERVERBOUND));
++        // Paper start - Add support for Proxy Protocol
++        if (io.papermc.paper.configuration.GlobalConfiguration.get().proxies.proxyProtocol) {
++            channel.pipeline().addAfter("timeout", "haproxy-decoder", new io.netty.handler.codec.haproxy.HAProxyMessageDecoder());
++            channel.pipeline().addAfter("haproxy-decoder", "haproxy-handler", new ChannelInboundHandlerAdapter() {
++                @Override
++                public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
++                    if (msg instanceof io.netty.handler.codec.haproxy.HAProxyMessage message) {
++                        if (message.command() == io.netty.handler.codec.haproxy.HAProxyCommand.PROXY) {
++                            String realaddress = message.sourceAddress();
++                            int realport = message.sourcePort();
++
++                            SocketAddress socketaddr = new java.net.InetSocketAddress(realaddress, realport);
++
++                            Connection connection = (Connection) channel.pipeline().get("packet_handler");
++                            connection.address = socketaddr;
++                            // Paper start - Add API to get player's proxy address
++                            final String proxyAddress = message.destinationAddress();
++                            final int proxyPort = message.destinationPort();
++
++                            connection.haProxyAddress = new java.net.InetSocketAddress(proxyAddress, proxyPort);
++                            // Paper end - Add API to get player's proxy address
++                        }
++                    } else {
++                        super.channelRead(ctx, msg);
++                    }
++                }
++            });
++        }
++        // Paper end - Add support for proxy protocol
++        // ServerConnectionListener.this.connections.add(connection); // Paper - prevent blocking on adding a new connection while the server is ticking
++        ServerConnectionListener.this.pending.add(connection); // Paper - prevent blocking on adding a new connection while the server is ticking
++        connection.configurePacketHandler(channelPipeline);
++        connection.setListenerForServerboundHandshake(
++            new ServerHandshakePacketListenerImpl(ServerConnectionListener.this.server, connection)
++        );
++        io.papermc.paper.network.ChannelInitializeListenerHolder.callListeners(channel); // Paper - Add Channel initialization listeners
++    }
++
++    private volatile boolean acceptingConnections;
++
++    /**
++     * Listener for the proxy tunnel: one socket per proxy, every player of it as a stream that ends
++     * up in {@link #initializeConnectionChannel} like an accepted socket would.
++     */
++    public void startTunnelListener(java.net.InetSocketAddress gameAddress) throws IOException {
++        int port = org.dreeam.leaf.config.modules.network.ProxyTunnel.port > 0 ? org.dreeam.leaf.config.modules.network.ProxyTunnel.port : gameAddress.getPort() + 1;
++        java.net.InetSocketAddress address = new java.net.InetSocketAddress(gameAddress.getAddress(), port);
++        String secret = io.papermc.paper.configuration.GlobalConfiguration.get().proxies.velocity.secret;
++
++        if (secret == null || secret.isEmpty()) {
++            LOGGER.error("The proxy tunnel needs the Velocity forwarding secret to authenticate the proxy; tunnel disabled.");
++            return;
++        }
++
++        synchronized (this.channels) {
++            EventLoopGroupHolder eventLoopGroupHolder = EventLoopGroupHolder.remote(address, this.server.useNativeTransport());
++            byte[] secretBytes = org.dreeam.leaf.network.tunnel.TunnelProtocol.secretBytes(secret);
++
+             this.channels
+                 .add(
+                     new ServerBootstrap()
+@@ -90,70 +189,35 @@ public class ServerConnectionListener {
+                                 protected void initChannel(Channel channel) {
+                                     try {
+                                         channel.config().setOption(ChannelOption.TCP_NODELAY, true);
+-                                    } catch (ChannelException var5) {
++                                    } catch (ChannelException ignored) {
+                                     }
+ 
+-                                    if (!disableFlushConsolidation) channel.pipeline().addFirst(new io.netty.handler.flush.FlushConsolidationHandler()); // Paper - Optimize network
+-                                    ChannelPipeline channelPipeline = channel.pipeline().addLast("timeout", new ReadTimeoutHandler(30));
+-                                    if (ServerConnectionListener.this.server.repliesToStatus()) {
+-                                        channelPipeline.addLast("legacy_query", new LegacyQueryHandler(ServerConnectionListener.this.getServer()));
+-                                    }
+-
+-                                    Connection.configureSerialization(channelPipeline, PacketFlow.SERVERBOUND, false, null);
+-                                    int rateLimitPacketsPerSecond = ServerConnectionListener.this.server.getRateLimitPacketsPerSecond();
+-                                    Connection connection = (Connection)(rateLimitPacketsPerSecond > 0
+-                                        ? new RateKickingConnection(rateLimitPacketsPerSecond)
+-                                        : new Connection(PacketFlow.SERVERBOUND));
+-                                    // Paper start - Add support for Proxy Protocol
+-                                    if (io.papermc.paper.configuration.GlobalConfiguration.get().proxies.proxyProtocol) {
+-                                        channel.pipeline().addAfter("timeout", "haproxy-decoder", new io.netty.handler.codec.haproxy.HAProxyMessageDecoder());
+-                                        channel.pipeline().addAfter("haproxy-decoder", "haproxy-handler", new ChannelInboundHandlerAdapter() {
+-                                            @Override
+-                                            public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+-                                                if (msg instanceof io.netty.handler.codec.haproxy.HAProxyMessage message) {
+-                                                    if (message.command() == io.netty.handler.codec.haproxy.HAProxyCommand.PROXY) {
+-                                                        String realaddress = message.sourceAddress();
+-                                                        int realport = message.sourcePort();
+-
+-                                                        SocketAddress socketaddr = new java.net.InetSocketAddress(realaddress, realport);
+-
+-                                                        Connection connection = (Connection) channel.pipeline().get("packet_handler");
+-                                                        connection.address = socketaddr;
+-                                                        // Paper start - Add API to get player's proxy address
+-                                                        final String proxyAddress = message.destinationAddress();
+-                                                        final int proxyPort = message.destinationPort();
+-
+-                                                        connection.haProxyAddress = new java.net.InetSocketAddress(proxyAddress, proxyPort);
+-                                                        // Paper end - Add API to get player's proxy address
+-                                                    }
+-                                                } else {
+-                                                    super.channelRead(ctx, msg);
+-                                                }
+-                                            }
+-                                        });
+-                                    }
+-                                    // Paper end - Add support for proxy protocol
+-                                    // ServerConnectionListener.this.connections.add(connection); // Paper - prevent blocking on adding a new connection while the server is ticking
+-                                    ServerConnectionListener.this.pending.add(connection); // Paper - prevent blocking on adding a new connection while the server is ticking
+-                                    connection.configurePacketHandler(channelPipeline);
+-                                    connection.setListenerForServerboundHandshake(
+-                                        new ServerHandshakePacketListenerImpl(ServerConnectionListener.this.server, connection)
+-                                    );
+-                                    io.papermc.paper.network.ChannelInitializeListenerHolder.callListeners(channel); // Paper - Add Channel initialization listeners
++                                    channel.pipeline().addLast("tunnel-handshake", new org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler(secretBytes, () -> new org.dreeam.leaf.network.tunnel.TunnelServerMultiplexer(
++                                        eventLoopGroupHolder.eventLoopGroup(),
++                                        gameAddress,
++                                        ServerConnectionListener.this::initializeConnectionChannel,
++                                        () -> ServerConnectionListener.this.acceptingConnections,
++                                        org.dreeam.leaf.config.modules.network.ProxyTunnel.flushIntervalMillis,
++                                        org.dreeam.leaf.config.modules.network.ProxyTunnel.windowBytes
++                                    )));
+                                 }
+                             }
+                         )
+                         .group(eventLoopGroupHolder.eventLoopGroup())
+-                        .localAddress(address) // Paper - Unix domain socket support
+-                        .option(ChannelOption.AUTO_READ, false) // CraftBukkit
++                        .localAddress(address)
++                        .option(ChannelOption.AUTO_READ, false)
+                         .bind()
+                         .syncUninterruptibly()
+                 );
+         }
++
++        LOGGER.info("Proxy tunnel listening on {}", address);
+     }
++    // Leaf end - Proxy tunnel
+ 
+     // CraftBukkit start
+     public void acceptConnections() {
++        this.acceptingConnections = true; // Leaf - Proxy tunnel
+         synchronized (this.channels) {
+             for (ChannelFuture future : this.channels) {
+                 future.channel().config().setAutoRead(true);
