@@ -10,7 +10,7 @@ public class ProxyTunnel extends ConfigModules {
     }
 
     public static boolean enabled = false;
-    /** 0 binds the game port + 1. */
+    /** 0 accepts the tunnel on the game port itself; any other value binds a listener of its own. */
     public static int port = 0;
     public static int flushIntervalMillis = 10;
     public static int windowBytes = 1 << 20;
@@ -31,9 +31,9 @@ public class ProxyTunnel extends ConfigModules {
 
                 需要重启服务器才能生效."""));
         port = config.getInt(getBasePath() + ".port", port, config.pickStringRegionBased("""
-                Port the tunnel listens on. 0 uses the game port + 1.""",
+                Port the tunnel listens on. 0 accepts it on the game port itself: the first bytes tell the two apart.""",
             """
-                隧道监听的端口. 0 表示使用游戏端口 + 1."""));
+                隧道监听的端口. 0 表示直接在游戏端口上接受 (通过前几个字节区分)."""));
         flushIntervalMillis = config.getInt(getBasePath() + ".flush-interval-millis", flushIntervalMillis, config.pickStringRegionBased("""
                 How often the tunnel socket is flushed. Lower is less latency, higher is fewer syscalls.""",
             """
