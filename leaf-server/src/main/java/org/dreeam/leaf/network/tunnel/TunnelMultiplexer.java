@@ -88,6 +88,11 @@ public abstract class TunnelMultiplexer extends ChannelInboundHandlerAdapter {
         return this.streams.get(streamId);
     }
 
+    /** Drops a stream that never got a channel to live in; on the socket loop. */
+    protected void forgetStream(int streamId) {
+        this.streams.remove(streamId);
+    }
+
     // ---- socket lifecycle ----
 
     @Override
@@ -141,20 +146,12 @@ public abstract class TunnelMultiplexer extends ChannelInboundHandlerAdapter {
         for (Map.Entry<TunnelChildChannel, List<ByteBuf>> entry : this.readBatch.entrySet()) {
             TunnelChildChannel child = entry.getKey();
             List<ByteBuf> payloads = entry.getValue();
-            if (child.loop().inEventLoop()) {
-                child.deliver(payloads);
-            } else {
-                child.loop().execute(() -> child.deliver(payloads));
-            }
+            child.onLoop(() -> child.deliver(payloads));
         }
         this.readBatch.clear();
 
         for (TunnelChildChannel child : this.closedInBatch) {
-            if (child.loop().inEventLoop()) {
-                child.peerClosed();
-            } else {
-                child.loop().execute(child::peerClosed);
-            }
+            child.onLoop(child::peerClosed);
         }
         this.closedInBatch.clear();
     }
@@ -166,7 +163,7 @@ public abstract class TunnelMultiplexer extends ChannelInboundHandlerAdapter {
         List<TunnelChildChannel> open = new ArrayList<>(this.streams.values());
         this.streams.clear();
         for (TunnelChildChannel child : open) {
-            child.loop().execute(child::peerClosed);
+            child.onLoop(child::peerClosed);
         }
 
         onSocketClosed();
@@ -218,7 +215,7 @@ public abstract class TunnelMultiplexer extends ChannelInboundHandlerAdapter {
         if (child == null || credits <= 0) {
             return;
         }
-        child.loop().execute(() -> child.addCredits(credits));
+        child.onLoop(() -> child.addCredits(credits));
     }
 
     // ---- writing and timers ----

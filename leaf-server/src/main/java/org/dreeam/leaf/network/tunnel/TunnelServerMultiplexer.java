@@ -1,34 +1,32 @@
 package org.dreeam.leaf.network.tunnel;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.EventLoop;
-import io.netty.channel.EventLoopGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
- * Backend side of a tunnel socket: every OPEN becomes a stream channel registered on one of the
- * server's network event loops and initialised exactly like an accepted socket, so the rest of the
- * server (Connection, handshake, login, play) never knows the difference.
+ * Backend side of a tunnel socket: every OPEN becomes a stream channel handed to the server's own
+ * accept path, so it is registered, initialised and seen by plugins exactly like an accepted socket
+ * and the rest of the server (Connection, handshake, login, play) never knows the difference.
  */
 public final class TunnelServerMultiplexer extends TunnelMultiplexer {
     private static final Logger LOGGER = LoggerFactory.getLogger(TunnelServerMultiplexer.class);
 
-    private final EventLoopGroup streamLoops;
     private final InetSocketAddress localAddress;
-    private final Consumer<Channel> connectionInitializer;
+    private final Predicate<TunnelChildChannel> acceptor;
     private final BooleanSupplier accepting;
 
-    public TunnelServerMultiplexer(EventLoopGroup streamLoops, InetSocketAddress localAddress, Consumer<Channel> connectionInitializer, BooleanSupplier accepting, int flushIntervalMillis, int windowBytes) {
+    /**
+     * @param acceptor puts the stream through the server's accept path; false when there is no
+     *                 listener to accept it, and the stream is refused
+     */
+    public TunnelServerMultiplexer(InetSocketAddress localAddress, Predicate<TunnelChildChannel> acceptor, BooleanSupplier accepting, int flushIntervalMillis, int windowBytes) {
         super(false, flushIntervalMillis, windowBytes);
-        this.streamLoops = streamLoops;
         this.localAddress = localAddress;
-        this.connectionInitializer = connectionInitializer;
+        this.acceptor = acceptor;
         this.accepting = accepting;
     }
 
@@ -39,23 +37,14 @@ public final class TunnelServerMultiplexer extends TunnelMultiplexer {
             return;
         }
 
-        EventLoop loop = this.streamLoops.next();
-        TunnelChildChannel child = new TunnelChildChannel(context().channel(), this, streamId, remote, this.localAddress, loop, this.windowBytes);
+        TunnelChildChannel child = new TunnelChildChannel(context().channel(), this, streamId, remote, this.localAddress, this.windowBytes);
         registerStream(child);
 
-        child.pipeline().addLast(new ChannelInitializer<Channel>() {
-            @Override
-            protected void initChannel(Channel channel) {
-                TunnelServerMultiplexer.this.connectionInitializer.accept(channel);
-            }
-        });
-
-        loop.register(child).addListener(future -> {
-            if (!future.isSuccess()) {
-                LOGGER.warn("Could not register tunnel stream {} for {}", streamId, remote, future.cause());
-                child.close();
-            }
-        });
+        if (!this.acceptor.test(child)) {
+            LOGGER.warn("No listener to accept tunnel stream {} for {}", streamId, remote);
+            forgetStream(streamId);
+            send(TunnelFrame.close(streamId));
+        }
     }
 
     @Override

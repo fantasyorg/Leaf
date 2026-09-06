@@ -15,6 +15,7 @@ import io.netty.util.ReferenceCountUtil;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -23,9 +24,11 @@ import java.util.List;
  * frames handed to the tunnel socket without a flush of their own. Closing it closes the stream,
  * never the socket.
  *
- * <p>The channel may live on a different event loop than the socket. Everything here runs on the
- * channel's loop; the multiplexer crosses to the socket's loop when it forwards a frame, and to this
- * loop when it delivers one.
+ * <p>The channel may live on a different event loop than the socket, and which loop is decided by
+ * whoever registers it (the server's accept path picks one like it does for a socket). Everything
+ * here runs on the channel's loop; the multiplexer crosses to the socket's loop when it forwards a
+ * frame, and hands deliveries to this loop through {@link #onLoop}, which holds them until the loop
+ * is known.
  *
  * <p>Flow control is a byte window per stream. Writes stop when the peer's credits run out and
  * resume when a WINDOW frame arrives; delivered bytes are credited back to the peer as the pipeline
@@ -41,8 +44,10 @@ public final class TunnelChildChannel extends AbstractChannel {
     private final InetSocketAddress localAddress;
     private final ChannelConfig config = new DefaultChannelConfig(this);
     private final ArrayDeque<ByteBuf> inbound = new ArrayDeque<>();
-    private final EventLoop loop;
     private final int windowBytes;
+    private final Object handoffLock = new Object();
+    /** Deliveries that arrived before registration; null once the loop is known. */
+    private List<Runnable> beforeRegister = new ArrayList<>();
 
     private volatile boolean open = true;
     private volatile boolean registeredActive;
@@ -52,13 +57,12 @@ public final class TunnelChildChannel extends AbstractChannel {
     private int sendCredits;
     private int unreturnedCredits;
 
-    public TunnelChildChannel(Channel socket, TunnelMultiplexer multiplexer, int streamId, InetSocketAddress remoteAddress, InetSocketAddress localAddress, EventLoop loop, int windowBytes) {
+    public TunnelChildChannel(Channel socket, TunnelMultiplexer multiplexer, int streamId, InetSocketAddress remoteAddress, InetSocketAddress localAddress, int windowBytes) {
         super(socket);
         this.multiplexer = multiplexer;
         this.streamId = streamId;
         this.remoteAddress = remoteAddress;
         this.localAddress = localAddress;
-        this.loop = loop;
         this.windowBytes = windowBytes;
         this.sendCredits = windowBytes;
     }
@@ -68,11 +72,24 @@ public final class TunnelChildChannel extends AbstractChannel {
     }
 
     /**
-     * The loop this channel is registered on, known before the registration completes: frames that
-     * arrive in between are queued on it in order, behind the registration itself.
+     * Runs a task on this channel's loop, in order with the other tasks handed over this way. Before
+     * the channel is registered the loop is unknown, so the task waits and runs right after the
+     * registration completes.
      */
-    public EventLoop loop() {
-        return this.loop;
+    public void onLoop(Runnable task) {
+        synchronized (this.handoffLock) {
+            if (this.beforeRegister != null) {
+                this.beforeRegister.add(task);
+                return;
+            }
+        }
+
+        EventLoop loop = eventLoop();
+        if (loop.inEventLoop()) {
+            task.run();
+        } else {
+            loop.execute(task);
+        }
     }
 
     // ---- called by the multiplexer, always on this channel's loop ----
@@ -133,7 +150,7 @@ public final class TunnelChildChannel extends AbstractChannel {
 
     @Override
     protected boolean isCompatible(EventLoop loop) {
-        return loop == this.loop && loop instanceof SingleThreadEventLoop;
+        return loop instanceof SingleThreadEventLoop;
     }
 
     @Override
@@ -149,6 +166,16 @@ public final class TunnelChildChannel extends AbstractChannel {
     @Override
     protected void doRegister() {
         this.registeredActive = true;
+
+        // Held deliveries run after the registration finishes (channelActive included), still ahead
+        // of anything handed over from now on: the flip and the enqueues share the lock.
+        synchronized (this.handoffLock) {
+            List<Runnable> held = this.beforeRegister;
+            this.beforeRegister = null;
+            for (Runnable task : held) {
+                eventLoop().execute(task);
+            }
+        }
     }
 
     @Override
