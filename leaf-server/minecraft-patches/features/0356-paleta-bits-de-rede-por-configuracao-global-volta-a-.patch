@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 19:59:16 -0300
+Subject: [PATCH] paleta: bits de rede por configuracao, global volta a sair em
+ 15 bits
+
+O caminho de rede usava bitsInStorage() como formato de fio para toda
+configuracao. Para a paleta global isso e o formato de disco (9-14 bits
+conforme a paleta), mas o cliente mapeia qualquer byte acima de 8 para a
+largura do registro (15) e le 960 longs onde o servidor escreveu 576: chunk
+com uma secao de mais de 256 estados distintos derrubava o cliente com
+"Network Protocol Error" ao ser enviado.
+
+bitsOnWire() e o que a copia viva usa (igual ao vanilla); so a configuracao
+estreita alarga para os 4 bits que o cliente espera.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012phX6RKWML9QvBFUhrM9vU
+
+diff --git a/net/minecraft/world/level/chunk/Configuration.java b/net/minecraft/world/level/chunk/Configuration.java
+index 79dc1b63a05df16832a945faee58f233b0eada6c..465107a5617fb25b96ebdbb267e5fe1c1b30b278 100644
+--- a/net/minecraft/world/level/chunk/Configuration.java
++++ b/net/minecraft/world/level/chunk/Configuration.java
+@@ -9,6 +9,16 @@ public interface Configuration {
+ 
+     int bitsInStorage();
+ 
++    // RedeFantasy start - narrow block storage
++    /**
++     * Bits por posicao no pacote de chunk. O cliente deduz o tamanho do array pelo byte de bits que
++     * recebe, entao isso tem que ser o que a copia viva usa — a excecao e a estreita, que alarga.
++     */
++    default int bitsOnWire() {
++        return this.bitsInMemory();
++    }
++    // RedeFantasy end - narrow block storage
++
+     <T> Palette<T> createPalette(Strategy<T> strategy, List<T> values);
+ 
+     public record Global(@Override int bitsInMemory, @Override int bitsInStorage) implements Configuration {
+@@ -34,6 +44,11 @@ public interface Configuration {
+             return false;
+         }
+ 
++        @Override
++        public int bitsOnWire() {
++            return this.bitsInStorage;
++        }
++
+         @Override
+         public <T> Palette<T> createPalette(Strategy<T> strategy, List<T> values) {
+             return this.factory.create(this.bitsInMemory, values);
+diff --git a/net/minecraft/world/level/chunk/PalettedContainer.java b/net/minecraft/world/level/chunk/PalettedContainer.java
+index 1c0db10f876bce3887e72da8d9bf820cd574099e..70dc5be4a2c334c573e860f9d91547b347b56570 100644
+--- a/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -490,7 +490,7 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+         // RedeFantasy start - narrow block storage
+         /** A copia viva pode ser mais estreita que o formato de fio; quem sai na rede e esta. */
+         private BitStorage storageForWire() {
+-            final int bits = this.configuration.bitsInStorage();
++            final int bits = this.configuration.bitsOnWire();
+             final BitStorage storage = this.storage;
+ 
+             if (storage.getBits() == bits) {
+@@ -508,7 +508,7 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+         }
+ 
+         private int serializedLongCount() {
+-            final int bits = this.configuration.bitsInStorage();
++            final int bits = this.configuration.bitsOnWire();
+ 
+             if (this.storage.getBits() == bits) {
+                 return this.storage.getRaw().length;
