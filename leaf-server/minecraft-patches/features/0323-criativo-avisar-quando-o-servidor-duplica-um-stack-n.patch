@@ -6,7 +6,7 @@ Subject: [PATCH] criativo: avisar quando o servidor duplica um stack, no ponto
 
 
 diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
-index 0f85273753ece31ec559efaef8f6b5ab0916421d..22e5a4ac3b048c7a68d9d20754ab14202a2b8efe 100644
+index 0f85273753ece31ec559efaef8f6b5ab0916421d..1a982c88e48468b8158b1425cf895ff38d5d21d0 100644
 --- a/net/minecraft/world/inventory/AbstractContainerMenu.java
 +++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
 @@ -631,8 +631,27 @@ public abstract class AbstractContainerMenu {
@@ -20,8 +20,8 @@ index 0f85273753ece31ec559efaef8f6b5ab0916421d..22e5a4ac3b048c7a68d9d20754ab1420
 +                if (com.redefantasy.server.event.CreativeItemCloneEvent.getHandlerList().getRegisteredListeners().length > 0 && player.getBukkitEntity() instanceof org.bukkit.entity.Player bukkitPlayer) {
 +                    com.redefantasy.server.event.CreativeItemCloneEvent cloneEvent = new com.redefantasy.server.event.CreativeItemCloneEvent(
 +                        bukkitPlayer,
-+                        org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(slot.getItem()),
-+                        org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(cloned)
++                        org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitMirror(slot.getItem()),
++                        org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitMirror(cloned)
 +                    );
 +
 +                    if (!cloneEvent.callEvent()) {

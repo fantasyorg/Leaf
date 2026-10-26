@@ -1,24 +1,24 @@
 package org.dreeam.leaf.config.modules.misc;
 
-import org.dreeam.leaf.config.ConfigModules;
-import org.dreeam.leaf.config.EnumConfigCategory;
+import org.dreeam.leaf.config.ConfigModule;
+import org.dreeam.leaf.config.ConfigCategory;
 
 /**
  * O usercache.json: nome→UUID de quem já entrou. Desligado, o servidor não carrega, não anota no
  * login e não grava o arquivo; consulta por nome offline cai direto no resolvedor de perfil.
  */
-public class UserCache extends ConfigModules {
+public class UserCache extends ConfigModule {
 
-    public String getBasePath() {
-        return EnumConfigCategory.MISC.getBaseKeyName() + ".user-cache";
+    public String basePath() {
+        return ConfigCategory.MISC.basePath() + ".user-cache";
     }
 
     public static boolean enabled = true;
 
     @Override
     public void onLoaded() {
-        enabled = config.getBoolean(getBasePath() + ".enabled", enabled,
-            config.pickStringRegionBased("""
+        enabled = globalConfig.getBoolean(basePath() + ".enabled", enabled,
+            globalConfig.pickStringRegionBased("""
                     Keep usercache.json (name to UUID of everyone who ever joined). Disabled, the server
                     neither loads it, records logins into it, nor writes it; offline name lookups go
                     straight to the profile repository. Vanilla rewrites the whole file on every login.""",

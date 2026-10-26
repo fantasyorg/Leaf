@@ -48,7 +48,7 @@ index 7c73f5373d741c5703fff7f5e6eb66d6916b6d8f..464d07098a4e4d97b5be4b9fa61c2b71
      public final org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer persistentDataContainer = new org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer(DATA_TYPE_REGISTRY);
      private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
 diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
-index 9851a60140f9989fbac317db200d8484d43ee16c..66a6bae5d553e00b161ff622ee4f70a71ef4e952 100644
+index 9851a60140f9989fbac317db200d8484d43ee16c..49fb61cf5e689daad69764029112a796c94a4b9b 100644
 --- a/net/minecraft/world/level/chunk/LevelChunk.java
 +++ b/net/minecraft/world/level/chunk/LevelChunk.java
 @@ -529,6 +529,16 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
@@ -59,8 +59,8 @@ index 9851a60140f9989fbac317db200d8484d43ee16c..66a6bae5d553e00b161ff622ee4f70a7
 +        if (this.level instanceof ServerLevel replayLevel && replayLevel.replayRecordBlocks && !replayLevel.captureBlockStates) {
 +            new com.redefantasy.server.event.BlockUpdateEvent(
 +                org.bukkit.craftbukkit.block.CraftBlock.at(replayLevel, pos),
-+                oldState.createCraftBlockData(),
-+                state.createCraftBlockData()
++                oldState.asBlockData(),
++                state.asBlockData()
 +            ).callEvent();
 +        }
 +        // RedeFantasy end - replay BlockUpdateEvent

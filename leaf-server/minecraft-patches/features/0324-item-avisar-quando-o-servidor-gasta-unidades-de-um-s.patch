@@ -5,7 +5,7 @@ Subject: [PATCH] item: avisar quando o servidor gasta unidades de um stack
 
 
 diff --git a/net/minecraft/world/item/ItemStack.java b/net/minecraft/world/item/ItemStack.java
-index f9a0e3fee0b234c9ef9fdcba35a0b64389d01e4b..c5c32b749512322f093254c8eb967757e2299b5c 100644
+index f9a0e3fee0b234c9ef9fdcba35a0b64389d01e4b..15ae45797aea5ed83a6a7e1cc3fa40f25231075f 100644
 --- a/net/minecraft/world/item/ItemStack.java
 +++ b/net/minecraft/world/item/ItemStack.java
 @@ -1420,7 +1420,18 @@ public final class ItemStack implements DataComponentHolder, ItemInstance, net.c
@@ -16,7 +16,7 @@ index f9a0e3fee0b234c9ef9fdcba35a0b64389d01e4b..c5c32b749512322f093254c8eb967757
 +            if (amount > 0 && this != ItemStack.EMPTY && com.redefantasy.server.event.ItemConsumedEvent.getHandlerList().getRegisteredListeners().length > 0) {
 +                new com.redefantasy.server.event.ItemConsumedEvent(
 +                    owner == null ? null : (org.bukkit.entity.LivingEntity) owner.getBukkitEntity(),
-+                    org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(this),
++                    org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitMirror(this),
 +                    amount
 +                ).callEvent();
 +            }
