@@ -13,10 +13,10 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
 
 diff --git a/src/main/java/io/papermc/paper/configuration/WorldConfiguration.java b/src/main/java/io/papermc/paper/configuration/WorldConfiguration.java
-index 59d9d00f7526409cce03b774aff1e88cfa26e71a..ca2b4a5c93123914947cceb60748ec5c65c39d65 100644
+index 3a14e5a9aa24d4a79ad5c73ba017de076fbe9433..7459d52ee7abbe764ac42baf3db23823942cd1ed 100644
 --- a/src/main/java/io/papermc/paper/configuration/WorldConfiguration.java
 +++ b/src/main/java/io/papermc/paper/configuration/WorldConfiguration.java
-@@ -87,6 +87,29 @@ public class WorldConfiguration extends ConfigurationPart {
+@@ -88,6 +88,29 @@ public class WorldConfiguration extends ConfigurationPart {
      @Setting(Configuration.VERSION_FIELD)
      public int version = CURRENT_VERSION;
  
