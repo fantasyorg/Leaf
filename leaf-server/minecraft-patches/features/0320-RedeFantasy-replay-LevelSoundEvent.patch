@@ -5,32 +5,33 @@ Subject: [PATCH] RedeFantasy - replay LevelSoundEvent
 
 
 diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
-index 28994a86a2609f5298a84193e54ee89d292cc03f..ba71288526fdf958398b1b2f21e9f48e35ed907b 100644
+index 2a76aed3b6cc8264c5157aaff53a39673c4d88f1..b30d247f46493a9d3680ac3d743bbd10d01a4c53 100644
 --- a/net/minecraft/server/MinecraftServer.java
 +++ b/net/minecraft/server/MinecraftServer.java
-@@ -1934,6 +1934,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
-                 serverLevel.replayRecordBlocks = com.redefantasy.server.event.BlockUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (blocks)
-                 serverLevel.replayRecordEntities = com.redefantasy.server.event.EntityMetadataUpdateEvent.getHandlerList().getRegisteredListeners().length > 0 || com.redefantasy.server.event.EntityPositionUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (entities: metadata + position)
-                 serverLevel.replayRecordParticles = com.redefantasy.server.event.LevelParticleEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (particles)
-+                serverLevel.replayRecordSounds = com.redefantasy.server.event.LevelSoundEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (sounds)
-                 serverLevel.updateLagCompensationTick(); // Paper - lag compensation
-                 net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
-                 serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
+@@ -1921,6 +1921,8 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             level.replayRecordBlocks = com.redefantasy.server.event.BlockUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (blocks)
+             level.replayRecordEntities = com.redefantasy.server.event.EntityMetadataUpdateEvent.getHandlerList().getRegisteredListeners().length > 0 || com.redefantasy.server.event.EntityPositionUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (entities: metadata + position)
+             level.replayRecordParticles = com.redefantasy.server.event.LevelParticleEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (particles)
++            level.replayRecordSounds = com.redefantasy.server.event.LevelSoundEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (sounds)
++
+ 
+ 
+             level.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index e8c4b0b8b4849aa7cd130ed2e06a30bbed4e8586..c1111e56a9aee2fab76dee7e3303188f3dacc989 100644
+index 4b5a42e046aeaa82d5b732e5c1cb50f2f70bb16d..87743e04c1f47afece931660f849c1aca6cf7581 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -237,6 +237,7 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -244,6 +244,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
      public volatile boolean replayRecordBlocks; // RedeFantasy - replay recording gate (BlockUpdateEvent)
      public volatile boolean replayRecordEntities; // RedeFantasy - replay recording gate (EntityMetadataUpdateEvent)
      public volatile boolean replayRecordParticles; // RedeFantasy - replay recording gate (LevelParticleEvent)
 +    public volatile boolean replayRecordSounds; // RedeFantasy - replay recording gate (LevelSoundEvent)
+     private static final org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry DATA_TYPE_REGISTRY = new org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry();
+     public final org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer persistentDataContainer = new org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer(DATA_TYPE_REGISTRY);
      private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
-     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
-     final List<ServerPlayer> realPlayers; // Leaves - skip
-@@ -2056,6 +2057,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
-     public void playSeededSound(
-         @Nullable Entity entity, double x, double y, double z, Holder<SoundEvent> sound, SoundSource source, float volume, float pitch, long seed
+@@ -2083,6 +2084,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         final float pitch,
+         final long seed
      ) {
 +        // RedeFantasy start - replay LevelSoundEvent (root capture of server-sent sounds)
 +        if (this.replayRecordSounds) {
@@ -40,9 +41,9 @@ index e8c4b0b8b4849aa7cd130ed2e06a30bbed4e8586..c1111e56a9aee2fab76dee7e3303188f
          this.server
              .getPlayerList()
              .broadcast(
-@@ -2073,6 +2079,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
-     public void playSeededSound(
-         @Nullable Entity entity, Entity sourceEntity, Holder<SoundEvent> sound, SoundSource source, float volume, float pitch, long seed
+@@ -2106,11 +2112,17 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         final float pitch,
+         final long seed
      ) {
 +        // RedeFantasy start - replay LevelSoundEvent (entity-attached sound, captured at its position)
 +        if (this.replayRecordSounds) {
@@ -52,3 +53,9 @@ index e8c4b0b8b4849aa7cd130ed2e06a30bbed4e8586..c1111e56a9aee2fab76dee7e3303188f
          this.server
              .getPlayerList()
              .broadcast(
+                 except instanceof Player player ? player : null,
+                 sourceEntity.getX(),
++
+                 sourceEntity.getY(),
+                 sourceEntity.getZ(),
+                 sound.value().getRange(volume),

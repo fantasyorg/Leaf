@@ -8,19 +8,20 @@ No construtor do ServerLevel o mundo ainda nao tem nome (serverLevelData e
 nulo), e a config decide por nome de mundo: inicializar ali derrubava o boot.
 
 diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
-index 032d73d663e91369fa22f466758d00f1540bc927..925a45aa47bd09666afc23526b26a0f21bda4b6e 100644
+index ea9db664f034e1a6813e358270d333ce4d01633c..a72c77d605e6c866c03127f2e7b3c9428bf8a16b 100644
 --- a/net/minecraft/server/level/ServerLevel.java
 +++ b/net/minecraft/server/level/ServerLevel.java
-@@ -242,7 +242,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+@@ -250,7 +250,12 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
      public boolean hasRidableMoveEvent = false; // Purpur - Ridables
-     final List<ServerPlayer> realPlayers; // Leaves - skip
-     public final org.dreeam.leaf.async.tracker.AsyncTracker leaf$asyncTracker = new org.dreeam.leaf.async.tracker.AsyncTracker(this); // Leaf - Multithreaded tracker
+     public final org.dreeam.leaf.async.tracker.AsyncTracker leaf$asyncTracker = new org.dreeam.leaf.async.tracker.AsyncTracker(); // Leaf - Multithreaded tracker
 -    public final org.dreeam.leaf.async.chunk.@org.jspecify.annotations.Nullable ChunkPacketCache leaf$chunkPacketCache = org.dreeam.leaf.async.chunk.ChunkPacketCache.create(this); // Leaf - chunk packet cache
 +    // Leaf start - chunk packet cache
 +    // Resolvido no primeiro envio de chunk (ChunkPacketCache.of): aqui o mundo ainda nao tem nome.
 +    public org.dreeam.leaf.async.chunk.@org.jspecify.annotations.Nullable ChunkPacketCache leaf$chunkPacketCache;
 +    public boolean leaf$chunkPacketCacheResolved;
 +    // Leaf end - chunk packet cache
++
      private @Nullable WorldBorder worldBorder; // Leaf - Cache world border
  
      @Override

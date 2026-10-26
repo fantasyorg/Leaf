@@ -6,11 +6,11 @@ Subject: [PATCH] RedeFantasy - replay EntityMetadataUpdateEvent carrega
 
 
 diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
-index fd5a7c196056d0be7db1b260f2d48786da6421d5..b0bb0016549ac03c43337f8fe16c861c7ca2b072 100644
+index 4032632a8968b61a2fcef5cd75b7784b79446288..c9a6bc5a8b7681636a793e5ffbca4a3351037073 100644
 --- a/net/minecraft/server/level/ServerEntity.java
 +++ b/net/minecraft/server/level/ServerEntity.java
-@@ -430,7 +430,7 @@ public class ServerEntity {
-             this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityDataPacket(this.entity.getId(), list));
+@@ -462,7 +462,7 @@ public class ServerEntity {
+             this.synchronizer.sendToTrackingPlayersAndSelf(new ClientboundSetEntityDataPacket(this.entity.getId(), packedValues));
              // RedeFantasy start - replay EntityMetadataUpdateEvent (non-async tracker / Citizens path; main thread)
              if (this.entity.level() instanceof ServerLevel replayLevel && replayLevel.replayRecordEntities) {
 -                new com.redefantasy.server.event.EntityMetadataUpdateEvent(this.entity.getBukkitEntity()).callEvent();

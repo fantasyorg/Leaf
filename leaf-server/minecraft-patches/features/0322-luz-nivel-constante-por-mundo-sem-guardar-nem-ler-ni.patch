@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
 
 diff --git a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
-index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8d8d6061a 100644
+index 11f4f97b8b3a41d9cc84e7d9a01dbd465687fe81..2f3f0fb0d93becfe4ccebb3764cac811eec79cd2 100644
 --- a/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
 +++ b/ca/spottedleaf/moonrise/patches/starlight/light/StarLightInterface.java
 @@ -66,6 +66,44 @@ public final class StarLightInterface {
@@ -104,7 +104,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
                  final ChunkAccess chunk = StarLightInterface.this.getAnyChunkNow(pos.getX(), pos.getZ());
  
                  if (chunk == null || pos.getY() < StarLightInterface.this.minLightSection || pos.getY() > StarLightInterface.this.maxLightSection) {
-@@ -224,6 +284,12 @@ public final class StarLightInterface {
+@@ -234,6 +294,12 @@ public final class StarLightInterface {
          if (!this.hasSkyLight) {
              return 0;
          }
@@ -117,7 +117,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final int x = blockPos.getX();
          int y = blockPos.getY();
          final int z = blockPos.getZ();
-@@ -294,6 +360,12 @@ public final class StarLightInterface {
+@@ -304,6 +370,12 @@ public final class StarLightInterface {
          if (!this.hasBlockLight) {
              return 0;
          }
@@ -130,7 +130,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final int y = blockPos.getY();
          final int cy = y >> 4;
  
-@@ -431,6 +503,12 @@ public final class StarLightInterface {
+@@ -441,6 +513,12 @@ public final class StarLightInterface {
      }
  
      public void forceLoadInChunk(final ChunkAccess chunk, final Boolean[] emptySections) {
@@ -143,7 +143,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
          final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
  
-@@ -448,6 +526,11 @@ public final class StarLightInterface {
+@@ -458,6 +536,11 @@ public final class StarLightInterface {
      }
  
      public void loadInChunk(final int chunkX, final int chunkZ, final Boolean[] emptySections) {
@@ -155,7 +155,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
          final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
  
-@@ -465,6 +548,13 @@ public final class StarLightInterface {
+@@ -475,6 +558,13 @@ public final class StarLightInterface {
      }
  
      public void lightChunk(final ChunkAccess chunk, final Boolean[] emptySections) {
@@ -169,7 +169,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
          final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
  
-@@ -483,6 +573,21 @@ public final class StarLightInterface {
+@@ -493,6 +583,21 @@ public final class StarLightInterface {
  
      public void relightChunks(final Set<ChunkPos> chunks, final Consumer<ChunkPos> chunkLightCallback,
                                final IntConsumer onComplete) {
@@ -191,7 +191,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
          final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
  
-@@ -506,6 +611,11 @@ public final class StarLightInterface {
+@@ -516,6 +621,11 @@ public final class StarLightInterface {
      }
  
      public void checkSkyEdges(final int chunkX, final int chunkZ) {
@@ -203,7 +203,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
  
          try {
-@@ -518,6 +628,11 @@ public final class StarLightInterface {
+@@ -528,6 +638,11 @@ public final class StarLightInterface {
      }
  
      public void checkBlockEdges(final int chunkX, final int chunkZ) {
@@ -215,7 +215,7 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
          final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
          try {
              if (blockEngine != null) {
-@@ -624,7 +739,9 @@ public final class StarLightInterface {
+@@ -634,7 +749,9 @@ public final class StarLightInterface {
                      }
                  }
  
@@ -227,10 +227,10 @@ index a2fb9f49584467913a064ca0104101f45ff589e2..38e6ab6366b4fefd334ab35c03eb74d8
                      final BlockStarLightEngine blockEngine = this.lightEngine.getBlockLightEngine();
                      try {
 diff --git a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
-index e27b54f9dd30b08342d7ae2779d10cfdc643ed16..ebae1912c182c6897381bfce25e4948fbf2b2728 100644
+index 6d453411faa989785325caf8c259da7e52dbe3eb..38ad8c5fcb2380ffe31990c6d438c52bc71062e8 100644
 --- a/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
 +++ b/net/minecraft/world/level/chunk/storage/SerializableChunkData.java
-@@ -285,6 +285,17 @@ public record SerializableChunkData(
+@@ -272,6 +272,17 @@ public record SerializableChunkData(
          final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] blockNibbles = ca.spottedleaf.moonrise.patches.starlight.light.StarLightEngine.getFilledEmptyLight(world);
          final ca.spottedleaf.moonrise.patches.starlight.light.SWMRNibbleArray[] skyNibbles = ca.spottedleaf.moonrise.patches.starlight.light.StarLightEngine.getFilledEmptyLight(world);
  

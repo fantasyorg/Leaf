@@ -6,31 +6,33 @@ Subject: [PATCH] user cache: opcao pra nao carregar, anotar nem gravar o
 
 
 diff --git a/net/minecraft/server/players/CachedUserNameToIdResolver.java b/net/minecraft/server/players/CachedUserNameToIdResolver.java
-index a06275b08bc2a343260245a348958ed57fdd37d4..4119f21ab667f5c4fec0e800cd48f68b1d0e6305 100644
+index b7553611723f7120c66e1f3e51d89df28bd2756b..07451989b7bd32686010b0e303474b2504af60cf 100644
 --- a/net/minecraft/server/players/CachedUserNameToIdResolver.java
 +++ b/net/minecraft/server/players/CachedUserNameToIdResolver.java
 @@ -54,7 +54,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
-     public CachedUserNameToIdResolver(GameProfileRepository profileRepository, File file) {
+     public CachedUserNameToIdResolver(final GameProfileRepository profileRepository, final File file) {
          this.profileRepository = profileRepository;
          this.file = file;
 -        Lists.reverse(this.load()).forEach(this::safeAdd);
 +        if (org.dreeam.leaf.config.modules.misc.UserCache.enabled) Lists.reverse(this.load()).forEach(this::safeAdd); // Leaf - user cache toggle
      }
  
-     private void safeAdd(CachedUserNameToIdResolver.GameProfileInfo profileInfo) {
+     private void safeAdd(final CachedUserNameToIdResolver.GameProfileInfo profileInfo) {
 @@ -88,6 +88,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
  
      @Override
-     public void add(NameAndId nameAndId) {
+     public void add(final NameAndId nameAndId) {
 +        if (!org.dreeam.leaf.config.modules.misc.UserCache.enabled) return; // Leaf - user cache toggle
          this.addInternal(nameAndId);
      }
  
-@@ -216,6 +217,7 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
+@@ -210,7 +211,9 @@ public class CachedUserNameToIdResolver implements UserNameToIdResolver {
      @Override
-     public void save(boolean asyncSave) {
+     public void save(final boolean asyncSave) {
          // Paper end - Perf: Async GameProfileCache saving
 +        if (!org.dreeam.leaf.config.modules.misc.UserCache.enabled) return; // Leaf - user cache toggle
-         JsonArray jsonArray = new JsonArray();
+         JsonArray entryList = new JsonArray();
++
          DateFormat dateFormat = createDateFormat();
-         this.listTopMRUProfiles(org.spigotmc.SpigotConfig.userCacheCap).forEach(gameProfileInfo -> jsonArray.add(writeGameProfile(gameProfileInfo, dateFormat))); // Spigot // Paper - Fix GameProfileCache concurrency
+         this.listTopMRUProfiles(org.spigotmc.SpigotConfig.userCacheCap).forEach(entry -> entryList.add(writeGameProfile(entry, dateFormat))); // Spigot // Paper - Fix GameProfileCache concurrency
+         String toSave = this.gson.toJson(entryList);

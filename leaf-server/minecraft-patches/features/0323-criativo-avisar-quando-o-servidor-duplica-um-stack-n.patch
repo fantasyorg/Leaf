@@ -6,21 +6,21 @@ Subject: [PATCH] criativo: avisar quando o servidor duplica um stack, no ponto
 
 
 diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
-index e02184d0d52e04b35c4fb3534027bef3e1276cbc..485ef34702b7251103145a9a6ffd81de7a7fa5c7 100644
+index 0f85273753ece31ec559efaef8f6b5ab0916421d..22e5a4ac3b048c7a68d9d20754ab14202a2b8efe 100644
 --- a/net/minecraft/world/inventory/AbstractContainerMenu.java
 +++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
-@@ -628,7 +628,25 @@ public abstract class AbstractContainerMenu {
-             Slot slot2 = this.slots.get(slotIndex);
-             if (slot2.hasItem()) {
-                 ItemStack itemStack = slot2.getItem();
--                this.setCarried(itemStack.copyWithCount(itemStack.getMaxStackSize()));
+@@ -631,8 +631,27 @@ public abstract class AbstractContainerMenu {
+         } else if (containerInput == ContainerInput.CLONE && player.hasInfiniteMaterials() && this.getCarried().isEmpty() && slotIndex >= 0) {
+             Slot slot = this.slots.get(slotIndex);
+             if (slot.hasItem()) {
+-                this.setCarried(slot.safeClone(player));
 +                // RedeFantasy start - CreativeItemCloneEvent (fire where the copy is made, before the cursor gets it)
-+                ItemStack cloned = itemStack.copyWithCount(itemStack.getMaxStackSize());
++                ItemStack cloned = slot.safeClone(player);
 +
 +                if (com.redefantasy.server.event.CreativeItemCloneEvent.getHandlerList().getRegisteredListeners().length > 0 && player.getBukkitEntity() instanceof org.bukkit.entity.Player bukkitPlayer) {
 +                    com.redefantasy.server.event.CreativeItemCloneEvent cloneEvent = new com.redefantasy.server.event.CreativeItemCloneEvent(
 +                        bukkitPlayer,
-+                        org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(itemStack),
++                        org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(slot.getItem()),
 +                        org.bukkit.craftbukkit.inventory.CraftItemStack.asCraftMirror(cloned)
 +                    );
 +
@@ -34,5 +34,7 @@ index e02184d0d52e04b35c4fb3534027bef3e1276cbc..485ef34702b7251103145a9a6ffd81de
 +                this.setCarried(cloned);
 +                // RedeFantasy end - CreativeItemCloneEvent
              }
-         } else if (clickType == ClickType.THROW && this.getCarried().isEmpty() && slotIndex >= 0) {
-             Slot slot2 = this.slots.get(slotIndex);
++
+         } else if (containerInput == ContainerInput.THROW && this.getCarried().isEmpty() && slotIndex >= 0) {
+             Slot slot = this.slots.get(slotIndex);
+             int amount = buttonNum == 0 ? 1 : slot.getItem().getCount();

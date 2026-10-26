@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 02:05:19 -0300
+Subject: [PATCH] chunk packet cache: reusar o pacote de chunk entre jogadores
+ em mundo parado
+
+Cada jogador que entra num lobby recebia o mesmo chunk serializado do zero:
+paleta, bit storage, luz, block entities, e depois o deflate no Netty. Num
+mundo que nao muda isso e trabalho repetido por jogador. Agora o primeiro
+envio constroi o pacote e os seguintes mandam o mesmo objeto - o pacote nao
+depende do jogador (o Anti-Xray, que depende, passa por fora do cache).
+
+Invalidacao onde o mundo muda pro cliente: ChunkHolder.blockChanged e
+sectionLightChanged (todo bloco e luz que vira update), LevelChunk
+set/removeBlockEntity e Level.blockEntityChanged (o pacote carrega o NBT
+deles), ServerLevel.unload. Caffeine com teto por mundo e expiracao por
+acesso, entao chunk que ninguem visita solta a memoria sozinho.
+
+Config performance.chunk-packet-cache (desligado por padrao, lista de
+mundos); /leaf chunks cache|clearcache.
+
+diff --git a/net/minecraft/server/level/ChunkHolder.java b/net/minecraft/server/level/ChunkHolder.java
+index cd5a325d37f617431ceb568a655701601618198f..d319a2e85489229073cb1c80295fe9e931ae204a 100644
+--- a/net/minecraft/server/level/ChunkHolder.java
++++ b/net/minecraft/server/level/ChunkHolder.java
+@@ -221,6 +221,7 @@ public class ChunkHolder extends GenerationChunkHolder implements ca.spottedleaf
+     }
+ 
+     public boolean blockChanged(final BlockPos pos) {
++        this.leaf$invalidateCachedPacket(); // Leaf - chunk packet cache
+         LevelChunk chunk = this.playersSentChunkTo.size() == 0 ? null : this.getChunkToSend(); // Paper - rewrite chunk system
+         if (chunk == null) {
+             return false;
+@@ -240,7 +241,21 @@ public class ChunkHolder extends GenerationChunkHolder implements ca.spottedleaf
+         return !hadChangedSections;
+     }
+ 
++    // Leaf start - chunk packet cache
++    /** Bloco, luz ou block entity mudaram: o pacote guardado deste chunk nao descreve mais o mundo. */
++    private void leaf$invalidateCachedPacket() {
++        if (this.levelHeightAccessor instanceof ServerLevel serverLevel) {
++            final org.dreeam.leaf.async.chunk.ChunkPacketCache cache = org.dreeam.leaf.async.chunk.ChunkPacketCache.of(serverLevel);
++            if (cache != null) {
++                cache.invalidate(this.pos.x(), this.pos.z());
++            }
++        }
++    }
++    // Leaf end - chunk packet cache
++
+     public boolean sectionLightChanged(final LightLayer layer, final int chunkY) {
++        this.leaf$invalidateCachedPacket(); // Leaf - chunk packet cache
++
+         ChunkAccess chunk = this.getChunkIfPresent(ChunkStatus.INITIALIZE_LIGHT);
+         if (chunk == null) {
+             return false;
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 87743e04c1f47afece931660f849c1aca6cf7581..ea9db664f034e1a6813e358270d333ce4d01633c 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -250,6 +250,7 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final alternate.current.wire.WireHandler wireHandler = new alternate.current.wire.WireHandler(this); // Paper - optimize redstone (Alternate Current)
+     public boolean hasRidableMoveEvent = false; // Purpur - Ridables
+     public final org.dreeam.leaf.async.tracker.AsyncTracker leaf$asyncTracker = new org.dreeam.leaf.async.tracker.AsyncTracker(); // Leaf - Multithreaded tracker
++    public final org.dreeam.leaf.async.chunk.@org.jspecify.annotations.Nullable ChunkPacketCache leaf$chunkPacketCache = org.dreeam.leaf.async.chunk.ChunkPacketCache.create(this); // Leaf - chunk packet cache
+     private @Nullable WorldBorder worldBorder; // Leaf - Cache world border
+ 
+     @Override
+@@ -2010,8 +2011,14 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         levelChunk.clearAllBlockEntities();
+         levelChunk.unregisterTickContainerFromLevel(this);
+         this.debugSynchronizers.dropChunk(levelChunk.getPos());
++        // Leaf start - chunk packet cache
++        if (this.leaf$chunkPacketCache != null) {
++            this.leaf$chunkPacketCache.invalidate(levelChunk.locX, levelChunk.locZ);
++        }
++        // Leaf end - chunk packet cache
+     }
+ 
++
+     public void removePlayerImmediately(final ServerPlayer player, final Entity.RemovalReason reason) {
+         player.remove(reason, null); // CraftBukkit - add Bukkit remove cause
+     }
+diff --git a/net/minecraft/server/network/PlayerChunkSender.java b/net/minecraft/server/network/PlayerChunkSender.java
+index 196c01fe5f200ed57e6f23e0939cac616305571a..259b00ccd0b213af72a406ed6a2266fa4391dbf4 100644
+--- a/net/minecraft/server/network/PlayerChunkSender.java
++++ b/net/minecraft/server/network/PlayerChunkSender.java
+@@ -81,7 +81,15 @@ public class PlayerChunkSender {
+     public static void sendChunk(final ServerGamePacketListenerImpl connection, final ServerLevel level, final LevelChunk chunk) { // Paper - rewrite chunk system - public
+         // Paper start - Anti-Xray
+         final boolean shouldModify = level.chunkPacketBlockController.shouldModify(connection.player, chunk);
++        // Leaf start - chunk packet cache
++        final org.dreeam.leaf.async.chunk.ChunkPacketCache cache = shouldModify ? null : org.dreeam.leaf.async.chunk.ChunkPacketCache.of(level);
++        if (cache != null) {
++            connection.send(cache.get(chunk.locX, chunk.locZ, () -> new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, false)));
++        } else {
+         connection.send(new ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null, shouldModify));
++        }
++        // Leaf end - chunk packet cache
++
+         // Paper end - Anti-Xray
+         // Paper start - PlayerChunkLoadEvent
+         if (io.papermc.paper.event.packet.PlayerChunkLoadEvent.getHandlerList().getRegisteredListeners().length > 0) {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 4e489f8ce310e8fff39cb5c179bfad9c4f89aa6a..f267fec02e28c4c6d7d1ce6f90ca964e2dff51a9 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -2054,8 +2054,13 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+ 
+     public void blockEntityChanged(final BlockPos pos) {
+         if (this.hasChunkAt(pos)) {
+-            this.getChunkAt(pos).markUnsaved();
++            // Leaf start - chunk packet cache
++            final net.minecraft.world.level.chunk.LevelChunk chunk = this.getChunkAt(pos);
++            chunk.markUnsaved();
++            chunk.leaf$invalidateCachedPacket();
++            // Leaf end - chunk packet cache
+         }
++
+     }
+ 
+     public void onBlockEntityAdded(final BlockEntity blockEntity) {
+diff --git a/net/minecraft/world/level/chunk/LevelChunk.java b/net/minecraft/world/level/chunk/LevelChunk.java
+index 66a6bae5d553e00b161ff622ee4f70a71ef4e952..e8c3972799c8ce24c94ce50ff2e3641ea50d1ec0 100644
+--- a/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -616,6 +616,7 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+ 
+     @Override
+     public void setBlockEntity(final BlockEntity blockEntity) {
++        this.leaf$invalidateCachedPacket(); // Leaf - chunk packet cache
+         BlockPos pos = blockEntity.getBlockPos();
+         BlockState blockState = this.getBlockState(pos);
+         if (!blockState.hasBlockEntity()) {
+@@ -668,8 +669,20 @@ public class LevelChunk extends ChunkAccess implements DebugValueSource, ca.spot
+         return result;
+     }
+ 
++    // Leaf start - chunk packet cache
++    /** O pacote de chunk carrega o NBT dos block entities: entrou ou saiu um, o guardado esta velho. */
++    public void leaf$invalidateCachedPacket() {
++        final org.dreeam.leaf.async.chunk.ChunkPacketCache cache = org.dreeam.leaf.async.chunk.ChunkPacketCache.of(this.level);
++        if (cache != null) {
++            cache.invalidate(this.locX, this.locZ);
++        }
++    }
++    // Leaf end - chunk packet cache
++
+     @Override
+     public void removeBlockEntity(final BlockPos pos) {
++        this.leaf$invalidateCachedPacket(); // Leaf - chunk packet cache
++
+         if (this.isInLevel()) {
+             BlockEntity removeThis = this.blockEntities.remove(pos);
+             // CraftBukkit start - SPIGOT-5561: Also remove from pending map
