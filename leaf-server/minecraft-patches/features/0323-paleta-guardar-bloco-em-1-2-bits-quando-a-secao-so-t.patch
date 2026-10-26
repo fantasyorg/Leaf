@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Mon, 10 Aug 2026 00:22:06 -0300
+Subject: [PATCH] paleta: guardar bloco em 1-2 bits quando a secao so tem 2-4
+ valores
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O mapeamento de bloco promovia bits 1-4 todos pra 4, entao secao com 2 valores
+distintos pagava 4 bits por posicao — 4x o necessario. O bioma ja usava 1, 2 e 3
+bits, ou seja SimpleBitStorage e o formato sempre suportaram.
+
+Configuration.Narrow separa bitsInMemory de bitsInStorage. pack()/unpack() ja
+usavam bitsInStorage, entao o disco continua em 4 bits e nada externo enxerga
+diferenca; o unpack cai sozinho no ramo que re-encoda pro estreito. Na rede,
+storageForWire() alarga antes de escrever, sem tocar na paleta — os ids ja cabem
+em 4 bits, entao nao ha remapeamento.
+
+Preciso alargar porque writeFixedSizeLongArray nao manda tamanho: o cliente
+deduz do que espera, e ele mapeia bits 1-4 pra 4.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
+
+diff --git a/net/minecraft/world/level/chunk/Configuration.java b/net/minecraft/world/level/chunk/Configuration.java
+index 3135afe312672accb7fff2484d472469c4fae586..79dc1b63a05df16832a945faee58f233b0eada6c 100644
+--- a/net/minecraft/world/level/chunk/Configuration.java
++++ b/net/minecraft/world/level/chunk/Configuration.java
+@@ -23,6 +23,24 @@ public interface Configuration {
+         }
+     }
+ 
++    // RedeFantasy start - narrow block storage
++    /**
++     * Guarda menos bits por posicao do que o formato serializado exige. A paleta e a mesma dos dois
++     * lados, entao alargar na hora de escrever nao remapeia id nenhum.
++     */
++    public record Narrow(Palette.Factory factory, @Override int bitsInMemory, @Override int bitsInStorage) implements Configuration {
++        @Override
++        public boolean alwaysRepack() {
++            return false;
++        }
++
++        @Override
++        public <T> Palette<T> createPalette(Strategy<T> strategy, List<T> values) {
++            return this.factory.create(this.bitsInMemory, values);
++        }
++    }
++    // RedeFantasy end - narrow block storage
++
+     public record Simple(Palette.Factory factory, int bits) implements Configuration {
+         @Override
+         public boolean alwaysRepack() {
+diff --git a/net/minecraft/world/level/chunk/PalettedContainer.java b/net/minecraft/world/level/chunk/PalettedContainer.java
+index 07355d76cdb162b2d200c230e2511aca18babed3..1c0db10f876bce3887e72da8d9bf820cd574099e 100644
+--- a/net/minecraft/world/level/chunk/PalettedContainer.java
++++ b/net/minecraft/world/level/chunk/PalettedContainer.java
+@@ -484,20 +484,54 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
+         }
+ 
+         public int getSerializedSize(IdMap<T> map) {
+-            return 1 + this.palette.getSerializedSize(map) + this.storage.getRaw().length * 8;
++            return 1 + this.palette.getSerializedSize(map) + this.serializedLongCount() * 8; // RedeFantasy - narrow block storage
+         }
+ 
++        // RedeFantasy start - narrow block storage
++        /** A copia viva pode ser mais estreita que o formato de fio; quem sai na rede e esta. */
++        private BitStorage storageForWire() {
++            final int bits = this.configuration.bitsInStorage();
++            final BitStorage storage = this.storage;
++
++            if (storage.getBits() == bits) {
++                return storage;
++            }
++
++            final int size = storage.getSize();
++            final BitStorage wide = new SimpleBitStorage(bits, size);
++
++            for (int i = 0; i < size; ++i) {
++                wide.set(i, storage.get(i));
++            }
++
++            return wide;
++        }
++
++        private int serializedLongCount() {
++            final int bits = this.configuration.bitsInStorage();
++
++            if (this.storage.getBits() == bits) {
++                return this.storage.getRaw().length;
++            }
++
++            final int perLong = 64 / bits;
++
++            return (this.storage.getSize() + perLong - 1) / perLong;
++        }
++        // RedeFantasy end - narrow block storage
++
+         // Paper start - Anti-Xray - Add chunk packet info
+         public void write(FriendlyByteBuf buffer, IdMap<T> map, io.papermc.paper.antixray.@Nullable ChunkPacketInfo<T> chunkPacketInfo, int chunkSectionIndex) {
+-            buffer.writeByte(this.storage.getBits());
++            final BitStorage storage = this.storageForWire(); // RedeFantasy - narrow block storage
++            buffer.writeByte(storage.getBits()); // RedeFantasy - narrow block storage
+             this.palette.write(buffer, map);
+             if (chunkPacketInfo != null) {
+-                chunkPacketInfo.setBits(chunkSectionIndex, this.configuration.bitsInMemory());
++                chunkPacketInfo.setBits(chunkSectionIndex, storage.getBits()); // RedeFantasy - narrow block storage
+                 chunkPacketInfo.setPalette(chunkSectionIndex, this.palette);
+                 chunkPacketInfo.setIndex(chunkSectionIndex, buffer.writerIndex());
+             }
+             // Paper end - Anti-Xray - Add chunk packet info
+-            buffer.writeFixedSizeLongArray(this.storage.getRaw());
++            buffer.writeFixedSizeLongArray(storage.getRaw()); // RedeFantasy - narrow block storage
+         }
+ 
+         public PalettedContainer.Data<T> copy() {
+diff --git a/net/minecraft/world/level/chunk/Strategy.java b/net/minecraft/world/level/chunk/Strategy.java
+index a08756342f3cdb3a1188b2e6e56c59c4742db0d1..242b631b290eb313a5ac994286a3dd9f6a6ed336 100644
+--- a/net/minecraft/world/level/chunk/Strategy.java
++++ b/net/minecraft/world/level/chunk/Strategy.java
+@@ -21,6 +21,11 @@ public abstract class Strategy<T> {
+     static final Configuration TWO_BITS_LINEAR = new Configuration.Simple(LINEAR_PALETTE_FACTORY, 2);
+     static final Configuration THREE_BITS_LINEAR = new Configuration.Simple(LINEAR_PALETTE_FACTORY, 3);
+     static final Configuration FOUR_BITS_LINEAR = new Configuration.Simple(LINEAR_PALETTE_FACTORY, 4);
++    // RedeFantasy start - narrow block storage
++    // O bloco serializa sempre em 4 bits; so a copia viva encolhe.
++    private static final Configuration ONE_BIT_LINEAR_NARROW = new Configuration.Narrow(LINEAR_PALETTE_FACTORY, 1, 4);
++    private static final Configuration TWO_BITS_LINEAR_NARROW = new Configuration.Narrow(LINEAR_PALETTE_FACTORY, 2, 4);
++    // RedeFantasy end - narrow block storage
+     static final Configuration FIVE_BITS_HASHMAP = new Configuration.Simple(HASHMAP_PALETTE_FACTORY, 5);
+     static final Configuration SIX_BITS_HASHMAP = new Configuration.Simple(HASHMAP_PALETTE_FACTORY, 6);
+     static final Configuration SEVEN_BITS_HASHMAP = new Configuration.Simple(HASHMAP_PALETTE_FACTORY, 7);
+@@ -46,7 +51,8 @@ public abstract class Strategy<T> {
+                 return (Configuration)(switch (bits) {
+                     case 0 -> Strategy.ZERO_BITS;
+                     // Leaf start - Lithium - faster hash palette
+-                    case 1, 2 -> Strategy.FOUR_BITS_LINEAR;
++                    case 1 -> Strategy.ONE_BIT_LINEAR_NARROW; // RedeFantasy - narrow block storage
++                    case 2 -> Strategy.TWO_BITS_LINEAR_NARROW; // RedeFantasy - narrow block storage
+                     case 3, 4 -> Strategy.HASH_4BIT;
+                     case 5 -> Strategy.HASH_5BIT;
+                     case 6 -> Strategy.HASH_6BIT;

@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Tue, 14 Jul 2026 00:50:23 -0300
+Subject: [PATCH] Add ChunkSaveBackupEvent
+
+
+diff --git a/src/main/java/io/papermc/paper/event/world/ChunkSaveBackupEvent.java b/src/main/java/io/papermc/paper/event/world/ChunkSaveBackupEvent.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..00aad415f247f312681dff559dcc2f6c3ea6d24b
+--- /dev/null
++++ b/src/main/java/io/papermc/paper/event/world/ChunkSaveBackupEvent.java
+@@ -0,0 +1,124 @@
++package io.papermc.paper.event.world;
++
++import org.bukkit.World;
++import org.bukkit.event.Event;
++import org.bukkit.event.HandlerList;
++import org.jetbrains.annotations.NotNull;
++
++/**
++ * Called when a chunk's region data is written to disk, once for each region
++ * data type ({@link Type#CHUNK}, {@link Type#ENTITY}, {@link Type#POI}).
++ * <p>
++ * A single chunk persists these three data types into three separate region
++ * files, so a faithful backup must capture all of them - the terrain alone
++ * ({@link Type#CHUNK}) does not contain entities or the point-of-interest cache.
++ * <p>
++ * This event is fired asynchronously, off the main and region tick threads (on
++ * the IO compression executor), immediately before the data is serialized to
++ * disk. It is only fired for data that is actually being written.
++ */
++public class ChunkSaveBackupEvent extends Event {
++
++    private static final HandlerList HANDLERS = new HandlerList();
++
++    private final World world;
++    private final int chunkX;
++    private final int chunkZ;
++    private final Type type;
++    private final byte[] canonicalNbt;
++
++    public ChunkSaveBackupEvent(@NotNull final World world, final int chunkX, final int chunkZ,
++                                @NotNull final Type type, @NotNull final byte[] canonicalNbt) {
++        super(true); // Fired asynchronously
++        this.world = world;
++        this.chunkX = chunkX;
++        this.chunkZ = chunkZ;
++        this.type = type;
++        this.canonicalNbt = canonicalNbt;
++    }
++
++    /**
++     * Gets the world the chunk belongs to.
++     *
++     * @return the world
++     */
++    @NotNull
++    public World getWorld() {
++        return this.world;
++    }
++
++    /**
++     * Gets the X coordinate of the chunk.
++     *
++     * @return the chunk X coordinate
++     */
++    public int getChunkX() {
++        return this.chunkX;
++    }
++
++    /**
++     * Gets the Z coordinate of the chunk.
++     *
++     * @return the chunk Z coordinate
++     */
++    public int getChunkZ() {
++        return this.chunkZ;
++    }
++
++    /**
++     * Gets which kind of region data this event carries. A single chunk save
++     * may fire this event up to three times, once per {@link Type}.
++     *
++     * @return the region data type
++     */
++    @NotNull
++    public Type getType() {
++        return this.type;
++    }
++
++    /**
++     * Gets the canonical serialized NBT of the saved data. For {@link Type#CHUNK}
++     * data the volatile fields {@code LastUpdate} and {@code InhabitedTime} are
++     * stripped, so that unchanged terrain always serializes to identical bytes
++     * (useful for deduplication and hashing in a backup plugin).
++     *
++     * @return the canonical serialized NBT bytes
++     */
++    @NotNull
++    public byte[] getCanonicalNbt() {
++        return this.canonicalNbt;
++    }
++
++    @NotNull
++    @Override
++    public HandlerList getHandlers() {
++        return HANDLERS;
++    }
++
++    @NotNull
++    public static HandlerList getHandlerList() {
++        return HANDLERS;
++    }
++
++    /**
++     * The kind of region data being saved. Minecraft stores each of these in a
++     * separate region file per chunk.
++     */
++    public enum Type {
++        /**
++         * Terrain, block states, block entities (chest/sign contents), biomes,
++         * heightmaps and lighting. Stored in the {@code region/} folder.
++         */
++        CHUNK,
++        /**
++         * Entities such as mobs, item frames, armor stands, dropped items,
++         * minecarts, boats and paintings. Stored in the {@code entities/} folder.
++         */
++        ENTITY,
++        /**
++         * The point-of-interest cache (villager workstations, beds, portals,
++         * bells). Stored in the {@code poi/} folder.
++         */
++        POI
++    }
++}

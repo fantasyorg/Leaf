@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Mon, 10 Aug 2026 00:22:35 -0300
+Subject: [PATCH] block counting: ShortList sem indice de remocao
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Cada LevelChunkSection cria uma ShortList, e ela criava um Short2ShortOpenHashMap
+com capacidade default — dois short[33] por secao, inclusive em secao de ar puro.
+O Gale ja tinha feito o byIndex nascer vazio; faltava o mapa, que custa 4x mais.
+
+O mapa nao existia pra deduplicar: quem escreve garante que um valor nunca entra
+duas vezes (a secao so mexe aqui quando o bloco TROCA de estado de tick, e no
+recalc cada posicao pertence a uma unica entrada de paleta). Ele servia so pro
+remove achar o indice, entao remover varre.
+
+size() e getRaw() continuam sem tocar em nada disso — sao os dois que o random
+tick le por secao a cada tick.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
+
+diff --git a/src/main/java/ca/spottedleaf/moonrise/common/list/ShortList.java b/src/main/java/ca/spottedleaf/moonrise/common/list/ShortList.java
+index 14e6daea6644a6d6b99d9934f7ed94abb13a50fe..a4954b103142f1a7fa8f355e7f473fe05744d5ee 100644
+--- a/src/main/java/ca/spottedleaf/moonrise/common/list/ShortList.java
++++ b/src/main/java/ca/spottedleaf/moonrise/common/list/ShortList.java
+@@ -1,17 +1,17 @@
+ package ca.spottedleaf.moonrise.common.list;
+ 
+-import it.unimi.dsi.fastutil.shorts.Short2ShortOpenHashMap;
+ import java.util.Arrays;
+ 
+ public final class ShortList {
+ 
+-    private final Short2ShortOpenHashMap map = new Short2ShortOpenHashMap();
+-    {
+-        this.map.defaultReturnValue(Short.MIN_VALUE);
+-    }
+-
++    // RedeFantasy start - no removal index
++    /**
++     * Guarda so o vetor. Quem escreve garante que um valor nunca entra duas vezes: a secao so mexe
++     * aqui quando o bloco TROCA de estado de tick. Entao remover e varrer, e nao ha indice por secao.
++     */
+     private short[] byIndex = me.titaniumtown.ArrayConstants.emptyShortArray; // Gale - JettPack - reduce array allocations
+     private short count;
++    // RedeFantasy end - no removal index
+ 
+     public int size() {
+         return (int)this.count;
+@@ -29,17 +29,10 @@ public final class ShortList {
+         if (byIndex.length < len) {
+             this.byIndex = Arrays.copyOf(byIndex, len);
+         }
+-        this.map.ensureCapacity(len);
+     }
+ 
+     public boolean add(final short value) {
+         final int count = (int)this.count;
+-        final short currIndex = this.map.putIfAbsent(value, (short)count);
+-
+-        if (currIndex != Short.MIN_VALUE) {
+-            return false; // already in this list
+-        }
+-
+         short[] list = this.byIndex;
+ 
+         if (list.length == count) {
+@@ -54,26 +47,32 @@ public final class ShortList {
+     }
+ 
+     public boolean remove(final short value) {
+-        final short index = this.map.remove(value);
+-        if (index == Short.MIN_VALUE) {
++        // RedeFantasy start - no removal index
++        final short[] byIndex = this.byIndex;
++        final int count = (int)this.count;
++        int index = -1;
++
++        for (int i = 0; i < count; ++i) {
++            if (byIndex[i] == value) {
++                index = i;
++                break;
++            }
++        }
++
++        if (index < 0) {
+             return false;
+         }
++        // RedeFantasy end - no removal index
+ 
+         // move the entry at the end to this index
+         final short endIndex = --this.count;
+-        final short end = this.byIndex[endIndex];
+-        if (index != endIndex) {
+-            // not empty after this call
+-            this.map.put(end, index);
+-        }
+-        this.byIndex[(int)index] = end;
+-        this.byIndex[(int)endIndex] = (short)0;
++        byIndex[index] = byIndex[(int)endIndex];
++        byIndex[(int)endIndex] = (short)0;
+ 
+         return true;
+     }
+ 
+     public void clear() {
+         this.count = (short)0;
+-        this.map.clear();
+     }
+ }

@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 01:31:06 -0300
+Subject: [PATCH] idle world: pular a varredura de spawn sem categoria e o
+ tracker de entidade parada
+
+
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index ace8962353cb54fce23f696157524d615c89a762..1e0099a106a9172477863dd0c15b098deda457cf 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -1066,6 +1066,16 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+             if (tracker == null) {
+                 continue;
+             }
++            // Leaf start - idle world: entidade parada so recalcula quem a ve de tempos em tempos
++            final int staticInterval = org.dreeam.leaf.config.modules.opt.IdleWorldTicking.staticEntityTrackerInterval;
++            if (staticInterval > 1 && tracker.leaf$hasTicked() && !(entity instanceof ServerPlayer) && entity.getX() == entity.xo && entity.getY() == entity.yo && entity.getZ() == entity.zo && entity.getYRot() == entity.yRotO && (this.level.getGameTime() + entity.getId()) % staticInterval != 0) {
++                if (((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerTrackedEntity)tracker).moonrise$hasPlayers()
++                    || ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)entity).moonrise$getChunkStatus().isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
++                    tracker.serverEntity.sendChanges();
++                }
++                continue;
++            }
++            // Leaf end - idle world
+             ((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerTrackedEntity)tracker).moonrise$tick(((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)entity).moonrise$getChunkData().nearbyPlayers);
+             if (((ca.spottedleaf.moonrise.patches.entity_tracker.EntityTrackerTrackedEntity)tracker).moonrise$hasPlayers()
+                 || ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)entity).moonrise$getChunkStatus().isOrAfter(FullChunkStatus.ENTITY_TICKING)) {
+@@ -1285,6 +1295,13 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+         private long lastChunkUpdate = -1L;
+         private ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk lastTrackedChunk;
+ 
++        // Leaf start - idle world
++        /** O primeiro tick nunca e pulado: e ele que descobre os viewers iniciais. */
++        public final boolean leaf$hasTicked() {
++            return this.lastChunkUpdate != -1L;
++        }
++        // Leaf end - idle world
++
+         // Leaf - Multithreaded tracker - diff on change
+         @Override
+         public final void moonrise$tick(final ca.spottedleaf.moonrise.common.misc.NearbyPlayers.TrackedChunk chunk) {
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index 20cf0022566bc1ba1c0b1ce5d749f61694cd6a15..ad6e43d1ba74fea895479d57cde5569726b3cc77 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -638,6 +638,11 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+         try {
+             profiler.popPush("filteringSpawningChunks");
++            // Leaf start - idle world: no spawn category, no thunder = nothing to do with the list
++            if (org.dreeam.leaf.config.modules.opt.IdleWorldTicking.skipSpawnScanWithoutSpawning && filteredSpawningCategories.isEmpty() && !this.level.isThundering()) {
++                // list fica vazia: shuffle e tickSpawningChunk abaixo viram no-op
++            } else
++            // Leaf end - idle world
+             if (org.dreeam.leaf.config.modules.opt.OptimizeMobSpawning.enabled) { this.level.natureSpawnChunkMap.tick(this.level, list); } else { this.chunkMap.collectSpawningChunks(list); } // Leaf - optimize mob spawning
+             profiler.popPush("shuffleSpawningChunks");
+             // Paper start - chunk tick iteration optimisation

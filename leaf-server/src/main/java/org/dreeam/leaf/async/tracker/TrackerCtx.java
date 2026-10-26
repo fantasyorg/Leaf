@@ -326,6 +326,11 @@ public final class TrackerCtx {
             tracker.serverEntity.trackedDataValues = entityData.getNonDefaultValues();
             ClientboundSetEntityDataPacket packet = new ClientboundSetEntityDataPacket(tracker.serverEntity.entity.getId(), list);
             sendToTrackingPlayersAndSelf(tracker, packet);
+            // RedeFantasy start - replay EntityMetadataUpdateEvent (async tracker main-thread commit)
+            if (entity.level() instanceof net.minecraft.server.level.ServerLevel replayLevel && replayLevel.replayRecordEntities) {
+                new com.redefantasy.server.event.EntityMetadataUpdateEvent(entity.getBukkitEntity(), com.redefantasy.server.util.ReplayMetadataSerializer.serialize(entity, replayLevel.registryAccess())).callEvent();
+            }
+            // RedeFantasy end - replay EntityMetadataUpdateEvent
         }
 
         LivingEntity e = entity instanceof LivingEntity livingEntity ? livingEntity : null;

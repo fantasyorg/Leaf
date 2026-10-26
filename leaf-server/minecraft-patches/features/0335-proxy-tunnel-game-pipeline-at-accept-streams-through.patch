@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sun, 6 Sep 2026 18:20:24 -0300
+Subject: [PATCH] proxy tunnel: game pipeline at accept, streams through the
+ listener's accept path
+
+
+diff --git a/net/minecraft/server/network/ServerConnectionListener.java b/net/minecraft/server/network/ServerConnectionListener.java
+index a889243121c969a941f2b822c50453bd956e5e35..9d23e10cdc50677b09ef876ea0f92150aa4696f1 100644
+--- a/net/minecraft/server/network/ServerConnectionListener.java
++++ b/net/minecraft/server/network/ServerConnectionListener.java
+@@ -88,12 +88,11 @@ public class ServerConnectionListener {
+                             new ChannelInitializer<Channel>() {
+                                 @Override
+                                 protected void initChannel(Channel channel) {
+-                                    // Leaf start - Proxy tunnel; shared with tunnel streams, and sniffed on the game port when the tunnel has no port of its own
+-                                    if (ServerConnectionListener.this.tunnelOnGamePort != null && address instanceof java.net.InetSocketAddress gameAddress) {
+-                                        channel.pipeline().addLast("tunnel-sniffer", new org.dreeam.leaf.network.tunnel.TunnelPortSniffer(ServerConnectionListener.this::initializeConnectionChannel, () -> ServerConnectionListener.this.tunnelHandshake(eventLoopGroupHolder, gameAddress)));
+-                                        return;
++                                    ServerConnectionListener.this.initializeConnectionChannel(channel); // Leaf - Proxy tunnel; shared with tunnel streams
++                                    // Leaf start - Proxy tunnel; a socket on the game port may be a tunnel: the sniffer sits in front of the game pipeline and decides on the first bytes
++                                    if (ServerConnectionListener.this.tunnelOnGamePort != null && address instanceof java.net.InetSocketAddress gameAddress && !(channel instanceof org.dreeam.leaf.network.tunnel.TunnelChildChannel)) {
++                                        channel.pipeline().addFirst(org.dreeam.leaf.network.tunnel.TunnelPortSniffer.NAME, new org.dreeam.leaf.network.tunnel.TunnelPortSniffer(() -> ServerConnectionListener.this.tunnelHandshake(gameAddress), ServerConnectionListener.this::abandonConnection));
+                                     }
+-                                    ServerConnectionListener.this.initializeConnectionChannel(channel);
+                                     // Leaf end - Proxy tunnel
+                                 }
+                             }
+@@ -104,6 +103,7 @@ public class ServerConnectionListener {
+                         .bind()
+                         .syncUninterruptibly()
+                 );
++            this.gameListener = this.channels.get(this.channels.size() - 1).channel(); // Leaf - Proxy tunnel; streams are accepted through it
+         }
+     }
+ 
+@@ -168,6 +168,33 @@ public class ServerConnectionListener {
+     private volatile boolean acceptingConnections;
+     /** Secret of a tunnel that shares the game port; null when the tunnel is off or has a port of its own. */
+     private byte @Nullable [] tunnelOnGamePort;
++    /** The game port's server channel: tunnel streams go through its accept path. */
++    private volatile @Nullable Channel gameListener;
++
++    /**
++     * Puts a tunnel stream through the same accept path as a socket on the game port: the server
++     * channel's pipeline gets it as an accepted child, so whatever hooks the accept (PacketEvents,
++     * the bootstrap's own initializer) treats it like any player connection, and the bootstrap picks
++     * its event loop and registers it.
++     */
++    private boolean acceptTunnelStream(org.dreeam.leaf.network.tunnel.TunnelChildChannel stream) {
++        Channel listener = this.gameListener;
++
++        if (listener == null || !listener.isActive()) return false;
++
++        listener.eventLoop().execute(() -> listener.pipeline().fireChannelRead(stream));
++        return true;
++    }
++
++    /** A socket accepted as a player turned out to be a tunnel: its Connection is not one. */
++    private void abandonConnection(Channel channel) {
++        if (!(channel.pipeline().get("packet_handler") instanceof Connection connection)) return;
++
++        synchronized (this.connections) {
++            this.pending.remove(connection);
++            this.connections.remove(connection);
++        }
++    }
+ 
+     /** Reads the tunnel secret once; null (and a log line) when the tunnel cannot run. */
+     private byte @Nullable [] tunnelSecret() {
+@@ -181,11 +208,14 @@ public class ServerConnectionListener {
+         return org.dreeam.leaf.network.tunnel.TunnelProtocol.secretBytes(secret);
+     }
+ 
+-    private org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler tunnelHandshake(EventLoopGroupHolder eventLoopGroupHolder, java.net.InetSocketAddress gameAddress) {
+-        return new org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler(this.tunnelOnGamePort, () -> new org.dreeam.leaf.network.tunnel.TunnelServerMultiplexer(
+-            eventLoopGroupHolder.eventLoopGroup(),
++    private org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler tunnelHandshake(java.net.InetSocketAddress gameAddress) {
++        return tunnelHandshake(this.tunnelOnGamePort, gameAddress);
++    }
++
++    private org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler tunnelHandshake(byte[] secret, java.net.InetSocketAddress gameAddress) {
++        return new org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler(secret, () -> new org.dreeam.leaf.network.tunnel.TunnelServerMultiplexer(
+             gameAddress,
+-            this::initializeConnectionChannel,
++            this::acceptTunnelStream,
+             () -> this.acceptingConnections,
+             org.dreeam.leaf.config.modules.network.ProxyTunnel.flushIntervalMillis,
+             org.dreeam.leaf.config.modules.network.ProxyTunnel.windowBytes
+@@ -204,7 +234,7 @@ public class ServerConnectionListener {
+ 
+     /**
+      * Listener for the proxy tunnel on a port of its own: one socket per proxy, every player of it
+-     * as a stream that ends up in {@link #initializeConnectionChannel} like an accepted socket would.
++     * as a stream accepted through the game listener like a socket would be.
+      */
+     public void startTunnelListener(java.net.InetSocketAddress gameAddress, int port) throws IOException {
+         java.net.InetSocketAddress address = new java.net.InetSocketAddress(gameAddress.getAddress(), port);
+@@ -228,14 +258,7 @@ public class ServerConnectionListener {
+                                     } catch (ChannelException ignored) {
+                                     }
+ 
+-                                    channel.pipeline().addLast("tunnel-handshake", new org.dreeam.leaf.network.tunnel.TunnelServerHandshakeHandler(secretBytes, () -> new org.dreeam.leaf.network.tunnel.TunnelServerMultiplexer(
+-                                        eventLoopGroupHolder.eventLoopGroup(),
+-                                        gameAddress,
+-                                        ServerConnectionListener.this::initializeConnectionChannel,
+-                                        () -> ServerConnectionListener.this.acceptingConnections,
+-                                        org.dreeam.leaf.config.modules.network.ProxyTunnel.flushIntervalMillis,
+-                                        org.dreeam.leaf.config.modules.network.ProxyTunnel.windowBytes
+-                                    )));
++                                    channel.pipeline().addLast("tunnel-handshake", ServerConnectionListener.this.tunnelHandshake(secretBytes, gameAddress));
+                                 }
+                             }
+                         )

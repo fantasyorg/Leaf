@@ -1,0 +1,240 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sat, 29 Aug 2026 02:42:20 -0300
+Subject: [PATCH] lazy container broadcast: sincronizar o menu quando alguem
+ escreve nele, com varredura periodica
+
+
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index 67c13021344c93049f218b9dd5a0fccba09be75d..39c2135abf5696c448be37daed36a069cb726795 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -743,9 +743,16 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+ 
+         // Paper start - Configurable container update tick rate
+         if (--this.containerUpdateDelay <= 0) {
+-            this.containerMenu.broadcastChanges();
++            // Leaf start - lazy container broadcast
++            boolean swept = true;
++            if (org.dreeam.leaf.config.modules.opt.LazyContainerBroadcast.enabled) {
++                swept = this.containerMenu.leaf$broadcastChangesLazily();
++            } else {
++                this.containerMenu.broadcastChanges();
++            }
++            // Leaf end - lazy container broadcast
+             // Broadcast equipment and crafting slots when the player is in a container, fixes MC-297508
+-            if (this.containerMenu != this.inventoryMenu) {
++            if (swept && this.containerMenu != this.inventoryMenu) { // Leaf - lazy container broadcast
+                 this.inventoryMenu.broadcastNonContainerSlotChanges();
+             }
+             this.containerUpdateDelay = this.level().paperConfig().tickRates.containerUpdate;
+diff --git a/net/minecraft/world/Container.java b/net/minecraft/world/Container.java
+index e7ce25e83c0045b01905dac385cfd2f13e327880..cc714f1046298f7e9e216276b8fbb0921d432939 100644
+--- a/net/minecraft/world/Container.java
++++ b/net/minecraft/world/Container.java
+@@ -150,6 +150,18 @@ public interface Container extends Clearable, SlotProvider, Iterable<ItemStack>,
+ 
+     java.util.List<org.bukkit.entity.HumanEntity> getViewers();
+ 
++    // Leaf start - lazy container broadcast
++    /** Marca como sujo o menu de todo mundo que esta vendo este container. */
++    default void leaf$markViewersDirty() {
++        java.util.List<org.bukkit.entity.HumanEntity> viewers = this.getViewers();
++        for (int i = 0, size = viewers.size(); i < size; i++) {
++            if (viewers.get(i) instanceof org.bukkit.craftbukkit.entity.CraftHumanEntity viewer) {
++                viewer.getHandle().containerMenu.leaf$markDirty();
++            }
++        }
++    }
++    // Leaf end - lazy container broadcast
++
+     @javax.annotation.Nullable org.bukkit.inventory.InventoryHolder getOwner();
+ 
+     void setMaxStackSize(int size);
+diff --git a/net/minecraft/world/SimpleContainer.java b/net/minecraft/world/SimpleContainer.java
+index 0233c2b5e40c33330870e598431897a2ff98c2a3..94b25d66c5c4f25892375364aa3eb39e4e715efd 100644
+--- a/net/minecraft/world/SimpleContainer.java
++++ b/net/minecraft/world/SimpleContainer.java
+@@ -237,6 +237,7 @@ public class SimpleContainer implements Container, StackedContentsCompatible {
+                 containerListener.containerChanged(this);
+             }
+         }
++        this.leaf$markViewersDirty(); // Leaf - lazy container broadcast
+     }
+ 
+     @Override
+diff --git a/net/minecraft/world/entity/player/Inventory.java b/net/minecraft/world/entity/player/Inventory.java
+index 30b18b3e5541b67de7243a03a9f5b36575d76be0..938f1d8f0f4fa4a9c02ec19b09657dc86fbfbd2d 100644
+--- a/net/minecraft/world/entity/player/Inventory.java
++++ b/net/minecraft/world/entity/player/Inventory.java
+@@ -490,6 +490,7 @@ public class Inventory implements Container, Nameable {
+         if (equipmentSlot != null) {
+             this.equipment.set(equipmentSlot, stack);
+         }
++        this.leaf$markMenusDirty(); // Leaf - lazy container broadcast
+     }
+ 
+     public void save(ValueOutput.TypedOutputList<ItemStackWithSlot> output) {
+@@ -566,8 +567,22 @@ public class Inventory implements Container, Nameable {
+     @Override
+     public void setChanged() {
+         this.timesChanged++;
++        this.leaf$markMenusDirty(); // Leaf - lazy container broadcast
+     }
+ 
++    // Leaf start - lazy container broadcast
++    /** O inventario do jogador aparece no menu proprio e no menu aberto: os dois ficam sujos. */
++    public void leaf$markMenusDirty() {
++        // Os menus nascem depois do inventario no construtor do jogador.
++        if (this.player.inventoryMenu != null) {
++            this.player.inventoryMenu.leaf$markDirty();
++        }
++        if (this.player.containerMenu != null) {
++            this.player.containerMenu.leaf$markDirty();
++        }
++    }
++    // Leaf end - lazy container broadcast
++
+     public int getTimesChanged() {
+         return this.timesChanged;
+     }
+diff --git a/net/minecraft/world/inventory/AbstractContainerMenu.java b/net/minecraft/world/inventory/AbstractContainerMenu.java
+index 485ef34702b7251103145a9a6ffd81de7a7fa5c7..7e7e4b481ede7ba0b27ed3b37c26b8424989a573 100644
+--- a/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -157,6 +157,7 @@ public abstract class AbstractContainerMenu {
+     }
+ 
+     protected Slot addSlot(Slot slot) {
++        slot.leaf$menu = this; // Leaf - lazy container broadcast
+         slot.index = this.slots.size();
+         this.slots.add(slot);
+         this.lastSlots.add(ItemStack.EMPTY);
+@@ -264,6 +265,7 @@ public abstract class AbstractContainerMenu {
+ 
+     private final org.dreeam.leaf.util.cache.CachedItemStackSupplier broadcastCarried = new org.dreeam.leaf.util.cache.CachedItemStackSupplier(); // Leaf - Reduce AbstractContainerMenu allocations
+     public void broadcastChanges() {
++        this.leaf$dirty = false; // Leaf - lazy container broadcast
+         for (int i = 0; i < this.slots.size(); i++) {
+             ItemStack item = this.slots.get(i).getItem();
+             // Leaf start - Reduce AbstractContainerMenu allocations
+@@ -275,6 +277,35 @@ public abstract class AbstractContainerMenu {
+ 
+         this.synchronizeCarriedToRemote();
+ 
++        this.leaf$broadcastDataSlots(); // Leaf - lazy container broadcast
++    }
++
++    // Leaf start - lazy container broadcast
++    /** Alguem escreveu no menu desde a ultima sincronizacao. Nasce sujo: o primeiro tick compara tudo. */
++    private boolean leaf$dirty = true;
++    private int leaf$sweepCountdown;
++
++    public void leaf$markDirty() {
++        this.leaf$dirty = true;
++    }
++
++    /**
++     * A sincronizacao do tick: completa quando o menu esta sujo ou quando a varredura periodica
++     * vence; nos outros ticks so os data slots (inteiros, e mudam sozinhos: progresso de fornalha).
++     *
++     * @return se a varredura completa rodou
++     */
++    public boolean leaf$broadcastChangesLazily() {
++        if (this.leaf$dirty || --this.leaf$sweepCountdown <= 0) {
++            this.leaf$sweepCountdown = org.dreeam.leaf.config.modules.opt.LazyContainerBroadcast.fullSweepIntervalTicks;
++            this.broadcastChanges();
++            return true;
++        }
++        this.leaf$broadcastDataSlots();
++        return false;
++    }
++
++    private void leaf$broadcastDataSlots() {
+         for (int i = 0; i < this.dataSlots.size(); i++) {
+             DataSlot dataSlot = this.dataSlots.get(i);
+             int i1 = dataSlot.get();
+@@ -285,6 +316,7 @@ public abstract class AbstractContainerMenu {
+             this.synchronizeDataSlotToRemote(i, i1);
+         }
+     }
++    // Leaf end - lazy container broadcast
+ 
+     public void broadcastFullState() {
+         for (int i = 0; i < this.slots.size(); i++) {
+@@ -390,6 +422,7 @@ public abstract class AbstractContainerMenu {
+     }
+ 
+     public void clicked(int slotIndex, int button, ClickType clickType, Player player) {
++        this.leaf$markDirty(); // Leaf - lazy container broadcast
+         try {
+             this.doClick(slotIndex, button, clickType, player);
+         } catch (Exception var8) {
+@@ -768,10 +801,12 @@ public abstract class AbstractContainerMenu {
+ 
+         this.carried = carried;
+         this.stateId = stateId;
++        this.leaf$markDirty(); // Leaf - lazy container broadcast
+     }
+ 
+     public void setData(int id, int data) {
+         this.dataSlots.get(id).set(data);
++        this.leaf$markDirty(); // Leaf - lazy container broadcast
+     }
+ 
+     public abstract boolean stillValid(Player player);
+@@ -933,6 +968,7 @@ public abstract class AbstractContainerMenu {
+     }
+ 
+     public void setCarried(ItemStack stack) {
++        if (stack != this.carried) this.leaf$markDirty(); // Leaf - lazy container broadcast; getCarried normaliza pra EMPTY a cada leitura
+         this.carried = stack;
+     }
+ 
+@@ -951,6 +987,7 @@ public abstract class AbstractContainerMenu {
+ 
+     public void resumeRemoteUpdates() {
+         this.suppressRemoteUpdates = false;
++        this.leaf$markDirty(); // Leaf - lazy container broadcast; o que mudou em silencio vai no proximo tick
+     }
+ 
+     public void transferState(AbstractContainerMenu menu) {
+diff --git a/net/minecraft/world/inventory/Slot.java b/net/minecraft/world/inventory/Slot.java
+index 2b7e245ebf3bb471a1d817c4b5d56a64790cbab7..faf5d32a1ca7cb9199b1770dae4aa48a655ae0bd 100644
+--- a/net/minecraft/world/inventory/Slot.java
++++ b/net/minecraft/world/inventory/Slot.java
+@@ -68,8 +68,18 @@ public class Slot {
+ 
+     public void setChanged() {
+         this.container.setChanged();
++        // Leaf start - lazy container broadcast
++        if (this.leaf$menu != null) {
++            this.leaf$menu.leaf$markDirty();
++        }
++        // Leaf end - lazy container broadcast
+     }
+ 
++    // Leaf start - lazy container broadcast
++    /** O menu que adicionou este slot; quem escreve pelo slot suja o menu na hora. */
++    public @org.jspecify.annotations.Nullable AbstractContainerMenu leaf$menu;
++    // Leaf end - lazy container broadcast
++
+     public int getMaxStackSize() {
+         return this.container.getMaxStackSize();
+     }
+diff --git a/net/minecraft/world/level/block/entity/BlockEntity.java b/net/minecraft/world/level/block/entity/BlockEntity.java
+index 7761239b49a52d58ad69113126ae80cb6c837db4..5e5311d2ef17123e00da991bd3579fb65713f460 100644
+--- a/net/minecraft/world/level/block/entity/BlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BlockEntity.java
+@@ -236,6 +236,11 @@ public abstract class BlockEntity implements DebugValueSource, net.caffeinemc.mo
+     }
+ 
+     public void setChanged() {
++        // Leaf start - lazy container broadcast
++        if (this instanceof net.minecraft.world.Container container) {
++            container.leaf$markViewersDirty();
++        }
++        // Leaf end - lazy container broadcast
+         if (this.level != null) {
+             if (ignoreBlockEntityUpdates) return; // Paper - Perf: Optimize Hoppers
+             setChanged(this.level, this.worldPosition, this.blockState);

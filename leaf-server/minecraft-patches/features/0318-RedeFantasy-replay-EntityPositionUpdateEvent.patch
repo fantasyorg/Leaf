@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: RedeFantasy <dev@redefantasy.com>
+Date: Tue, 4 Aug 2026 21:20:28 -0300
+Subject: [PATCH] RedeFantasy - replay EntityPositionUpdateEvent
+
+
+diff --git a/net/minecraft/server/MinecraftServer.java b/net/minecraft/server/MinecraftServer.java
+index 11ca43e838f86115925a43424230029b4426a573..7c1e8d78a930c0be43ec3c397c1e7549a32632af 100644
+--- a/net/minecraft/server/MinecraftServer.java
++++ b/net/minecraft/server/MinecraftServer.java
+@@ -1932,7 +1932,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+                 serverLevel.hasPhysicsEvent = org.bukkit.event.block.BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - BlockPhysicsEvent
+                 serverLevel.hasEntityMoveEvent = io.papermc.paper.event.entity.EntityMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Paper - Add EntityMoveEvent
+                 serverLevel.replayRecordBlocks = com.redefantasy.server.event.BlockUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (blocks)
+-                serverLevel.replayRecordEntities = com.redefantasy.server.event.EntityMetadataUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (entities)
++                serverLevel.replayRecordEntities = com.redefantasy.server.event.EntityMetadataUpdateEvent.getHandlerList().getRegisteredListeners().length > 0 || com.redefantasy.server.event.EntityPositionUpdateEvent.getHandlerList().getRegisteredListeners().length > 0; // RedeFantasy - replay recording gate (entities: metadata + position)
+                 serverLevel.updateLagCompensationTick(); // Paper - lag compensation
+                 net.minecraft.world.level.block.entity.HopperBlockEntity.skipHopperEvents = serverLevel.paperConfig().hopper.disableMoveEvent || org.bukkit.event.inventory.InventoryMoveItemEvent.getHandlerList().getRegisteredListeners().length == 0; // Paper - Perf: Optimize Hoppers
+                 serverLevel.hasRidableMoveEvent = org.purpurmc.purpur.event.entity.RidableMoveEvent.getHandlerList().getRegisteredListeners().length > 0; // Purpur - Ridables
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 1f12cf3b9e7f58813091a649f0aea0ec28cc8e19..4f5f3dedbd1c7d179f608885d92f02b81fc5270c 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -1655,6 +1655,11 @@ public class ServerLevel extends Level implements ServerEntityGetter, WorldGenLe
+         entity.tick();
+         entity.postTick(); // CraftBukkit
+         } else {entity.inactiveTick();} // Paper - EAR 2
++        // RedeFantasy start - replay EntityPositionUpdateEvent (per-tick, owning thread, every entity incl. non-living)
++        if (this.replayRecordEntities && !entity.isRemoved()) {
++            new com.redefantasy.server.event.EntityPositionUpdateEvent(entity.getBukkitEntity()).callEvent();
++        }
++        // RedeFantasy end - replay EntityPositionUpdateEvent
+         profilerFiller.pop();
+ 
+         entity.updateLastTick(); // Leaf - Rewrite entity despawn time

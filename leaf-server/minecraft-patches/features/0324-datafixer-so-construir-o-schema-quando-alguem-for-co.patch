@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Mon, 10 Aug 2026 00:22:20 -0300
+Subject: [PATCH] datafixer: so construir o schema quando alguem for converter
+ de fato
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O DATA_FIXER era static final, entao o schema inteiro nascia no boot. O Paper
+converte chunk, entidade e poi pelo MCDataConverter dele, e dado ja na versao
+atual nao converte nada — na pratica o schema ocupava heap sem ser consultado.
+
+getDataFixer() passa a devolver um proxy: version >= newVersion volta a entrada
+sem tocar no Holder, e so uma conversao real constroi.
+
+CHECK_DATA_FIXER_SCHEMA desligado junto porque ele derrota o lazy: EntityType e
+BlockEntityType chamam fetchChoiceType no registro, uma vez por tipo, e isso
+materializa o schema. O retorno e descartado nos dois — a checagem so loga.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
+
+diff --git a/net/minecraft/SharedConstants.java b/net/minecraft/SharedConstants.java
+index 20eb982288b670773d12cbcbb9cb66ff8e19ba9e..b012fd2a6ded4506c50cf0981c11c5baaedfa9a7 100644
+--- a/net/minecraft/SharedConstants.java
++++ b/net/minecraft/SharedConstants.java
+@@ -122,7 +122,11 @@ public class SharedConstants {
+     public static final float MAXIMUM_BLOCK_EXPLOSION_RESISTANCE = 3600000.0F;
+     public static final boolean USE_WORKFLOWS_HOOKS = false;
+     public static final boolean USE_DEVONLY = false;
+-    public static boolean CHECK_DATA_FIXER_SCHEMA = true;
++    // RedeFantasy start - lazy datafixer
++    // Confere no registro se todo tipo de entidade e bloco tem fixer. O retorno e descartado nos dois
++    // chamadores: so serve para logar. Ligado, ele materializa o schema inteiro do DFU no boot.
++    public static boolean CHECK_DATA_FIXER_SCHEMA = false;
++    // RedeFantasy end - lazy datafixer
+     public static boolean IS_RUNNING_IN_IDE;
+     public static final int WORLD_RESOLUTION = 16;
+     public static final int MAX_CHAT_LENGTH = 256;
+diff --git a/net/minecraft/util/datafix/DataFixers.java b/net/minecraft/util/datafix/DataFixers.java
+index 79685009e9ba6463ad27f45b70bed9b2b922ccda..b01c5b3dcba7d34706eea52399eafd954b7e0e70 100644
+--- a/net/minecraft/util/datafix/DataFixers.java
++++ b/net/minecraft/util/datafix/DataFixers.java
+@@ -396,14 +396,39 @@ import net.minecraft.util.datafix.schemas.V99;
+ public class DataFixers {
+     private static final BiFunction<Integer, Schema, Schema> SAME = Schema::new;
+     private static final BiFunction<Integer, Schema, Schema> SAME_NAMESPACED = NamespacedSchema::new;
+-    private static final Result DATA_FIXER = createFixerUpper();
++    // RedeFantasy start - lazy datafixer
++    /** Segura a construcao do schema ate alguem realmente pedir por ela. */
++    private static final class Holder {
++        private static final Result DATA_FIXER = createFixerUpper();
++    }
++
++    /**
++     * O Paper converte chunk, entidade e poi pelo conversor dele, e dado ja na versao atual nao
++     * converte nada. Entao o schema do DFU costuma nascer, ocupar o heap e nunca ser consultado.
++     */
++    private static final DataFixer LAZY_DATA_FIXER = new DataFixer() {
++        @Override
++        public <T> Dynamic<T> update(TypeReference type, Dynamic<T> input, int version, int newVersion) {
++            if (version >= newVersion) {
++                return input;
++            }
++
++            return Holder.DATA_FIXER.fixer().update(type, input, version, newVersion);
++        }
++
++        @Override
++        public Schema getSchema(int key) {
++            return Holder.DATA_FIXER.fixer().getSchema(key);
++        }
++    };
++    // RedeFantasy end - lazy datafixer
+     public static final int BLENDING_VERSION = 4295;
+ 
+     private DataFixers() {
+     }
+ 
+     public static DataFixer getDataFixer() {
+-        return DATA_FIXER.fixer();
++        return LAZY_DATA_FIXER; // RedeFantasy - lazy datafixer
+     }
+ 
+     private static Result createFixerUpper() {
+@@ -419,7 +444,7 @@ public class DataFixers {
+             Executor singleThreadExecutor = Executors.newSingleThreadExecutor(
+                 new ThreadFactoryBuilder().setNameFormat("Datafixer Bootstrap").setDaemon(true).setPriority(1).build()
+             );
+-            return DATA_FIXER.optimize(references, singleThreadExecutor);
++            return Holder.DATA_FIXER.optimize(references, singleThreadExecutor); // RedeFantasy - lazy datafixer
+         }
+     }
+ 

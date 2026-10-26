@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Tue, 14 Jul 2026 00:50:23 -0300
+Subject: [PATCH] Add chunk save backup hook
+
+Fires ChunkSaveBackupEvent for every region data type (chunk, entity
+and poi) from the single MoonriseRegionFileIO write choke point, using
+the exact tag being persisted, off the region tick threads. Lets an
+external backup plugin capture dirty chunks at save time without a
+compile-time dependency on internal server classes.
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/io/MoonriseRegionFileIO.java b/ca/spottedleaf/moonrise/patches/chunk_system/io/MoonriseRegionFileIO.java
+index e7fc56d6c5bbc82521f8c9866cd5c93b6c552129..2b785c4f9a66f65cf1e0df0f4483141baa46c0e5 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/io/MoonriseRegionFileIO.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/io/MoonriseRegionFileIO.java
+@@ -1224,6 +1224,11 @@ public final class MoonriseRegionFileIO {
+             if (inProgressWrite.throwable != null) {
+                 LOGGER.error("Serialization task for chunk data failed: " + this.toString(), inProgressWrite.throwable);
+             } else {
++                // Chunk backup - expose the exact tag being persisted to registered listeners, for all
++                // three region data types (chunk/entity/poi), from the single IO write choke point.
++                // Runs on the compression executor, off the region tick threads; a null value means the
++                // entry is being removed and is skipped by the hook.
++                io.papermc.paper.chunkbackup.ChunkSaveHook.fireFromChunk(this.world, this.chunkX, this.chunkZ, this.regionDataController.type, inProgressWrite.value);
+                 try {
+                     writeData = this.regionDataController.startWrite(this.chunkX, this.chunkZ, inProgressWrite.value);
+                 } catch (final Throwable thr) {
+diff --git a/io/papermc/paper/chunkbackup/ChunkSaveHook.java b/io/papermc/paper/chunkbackup/ChunkSaveHook.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..53b90d9bb2ad5bed95b008ebc99a4c292ca15298
+--- /dev/null
++++ b/io/papermc/paper/chunkbackup/ChunkSaveHook.java
+@@ -0,0 +1,87 @@
++package io.papermc.paper.chunkbackup;
++
++import ca.spottedleaf.moonrise.patches.chunk_system.io.MoonriseRegionFileIO;
++import io.papermc.paper.event.world.ChunkSaveBackupEvent;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.nbt.NbtIo;
++import net.minecraft.server.level.ServerLevel;
++import org.bukkit.Bukkit;
++
++import java.io.ByteArrayOutputStream;
++import java.io.DataOutputStream;
++
++/**
++ * Exposes freshly written chunk region data to registered listeners via
++ * {@link ChunkSaveBackupEvent} so an external backup plugin can capture dirty
++ * chunks at save time, without a compile-time dependency on internal server
++ * classes.
++ * <p>
++ * Fired for all three region data types (chunk, entity, poi) from the single IO
++ * write choke point, off the main and region tick threads.
++ */
++public final class ChunkSaveHook {
++
++    /** Fields that change without the terrain changing; stripped before serialization (chunk data only). */
++    private static final String[] VOLATILE_FIELDS = { "LastUpdate", "InhabitedTime" };
++
++    private ChunkSaveHook() {
++    }
++
++    /**
++     * Canonicalises the data about to be written to a region file and dispatches
++     * it to all listeners. Never mutates {@code data} (the tag bound for disk)
++     * and never throws into the save path.
++     *
++     * @param world  the level owning the chunk
++     * @param chunkX the chunk X coordinate
++     * @param chunkZ the chunk Z coordinate
++     * @param type   which region file this data belongs to
++     * @param data   the tag about to be written, or {@code null} if the entry is being removed
++     */
++    public static void fireFromChunk(final ServerLevel world, final int chunkX, final int chunkZ,
++                                     final MoonriseRegionFileIO.RegionFileType type, final CompoundTag data) {
++        if (data == null) {
++            // null means this data type is being removed from the region file; nothing to back up
++            return;
++        }
++        if (ChunkSaveBackupEvent.getHandlerList().getRegisteredListeners().length == 0) {
++            return;
++        }
++
++        final ChunkSaveBackupEvent.Type apiType = mapType(type);
++        if (apiType == null) {
++            return;
++        }
++
++        try {
++            final CompoundTag canonical = data.copy();
++            if (apiType == ChunkSaveBackupEvent.Type.CHUNK) {
++                for (final String field : VOLATILE_FIELDS) {
++                    canonical.remove(field);
++                }
++            }
++
++            final ByteArrayOutputStream out = new ByteArrayOutputStream(8192);
++            NbtIo.write(canonical, new DataOutputStream(out));
++            final byte[] bytes = out.toByteArray();
++
++            final ChunkSaveBackupEvent event = new ChunkSaveBackupEvent(world.getWorld(), chunkX, chunkZ, apiType, bytes);
++            Bukkit.getPluginManager().callEvent(event);
++        } catch (final Throwable ignored) {
++            // serialization failure must never break chunk saving
++        }
++    }
++
++    private static ChunkSaveBackupEvent.Type mapType(final MoonriseRegionFileIO.RegionFileType type) {
++        switch (type) {
++            case CHUNK_DATA:
++                return ChunkSaveBackupEvent.Type.CHUNK;
++            case ENTITY_DATA:
++                return ChunkSaveBackupEvent.Type.ENTITY;
++            case POI_DATA:
++                return ChunkSaveBackupEvent.Type.POI;
++            default:
++                return null;
++        }
++    }
++}

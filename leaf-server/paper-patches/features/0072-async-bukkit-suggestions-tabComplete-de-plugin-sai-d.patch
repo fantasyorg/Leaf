@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Fri, 11 Sep 2026 17:31:28 -0300
+Subject: [PATCH] async bukkit suggestions: tabComplete de plugin sai da thread
+ principal
+
+
+diff --git a/src/main/java/io/papermc/paper/command/brigadier/bukkit/BukkitCommandNode.java b/src/main/java/io/papermc/paper/command/brigadier/bukkit/BukkitCommandNode.java
+index 5c52b1563d20d7e977a5bb958c18b19dec5c365a..7b20e0c42ec5a294cb826ac595555479cb130dbc 100644
+--- a/src/main/java/io/papermc/paper/command/brigadier/bukkit/BukkitCommandNode.java
++++ b/src/main/java/io/papermc/paper/command/brigadier/bukkit/BukkitCommandNode.java
+@@ -16,7 +16,6 @@ import net.minecraft.commands.CommandSource;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location;
+ import org.bukkit.command.Command;
+-import org.bukkit.command.CommandException;
+ import org.bukkit.command.CommandSender;
+ 
+ import java.util.Arrays;
+@@ -25,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
+ import java.util.logging.Level;
+ import org.bukkit.entity.Player;
+ import org.bukkit.event.server.TabCompleteEvent;
++import org.jspecify.annotations.Nullable;
+ 
+ public class BukkitCommandNode extends LiteralCommandNode<CommandSourceStack> {
+ 
+@@ -89,6 +89,11 @@ public class BukkitCommandNode extends LiteralCommandNode<CommandSourceStack> {
+ 
+     static class BukkitBrigSuggestionProvider implements SuggestionProvider<CommandSourceStack> {
+ 
++        // Leaf start - async bukkit suggestions
++        private static final java.util.concurrent.ExecutorService SUGGESTION_EXECUTOR = java.util.concurrent.Executors.newFixedThreadPool(4,
++            new com.google.common.util.concurrent.ThreadFactoryBuilder().setDaemon(true).setNameFormat("Bukkit Suggestion Thread - #%d").build());
++        // Leaf end - async bukkit suggestions
++
+         private final org.bukkit.command.Command command;
+         private final String literal;
+ 
+@@ -102,16 +107,29 @@ public class BukkitCommandNode extends LiteralCommandNode<CommandSourceStack> {
+             // Paper start
+             org.bukkit.command.CommandSender sender = context.getSource().getSender();
+             String[] args = builder.getRemaining().split(" ", -1); // We need the command included -- Set limit to -1, allow for trailing spaces
+-
+-            List<String> results = null;
+             Location pos = context.getSource().getLocation();
++            // Leaf start - async bukkit suggestions
++            // O tabComplete de um plugin pode ir ao banco ou à api, e a suggestion do brigadier é um
++            // future: resolvê-lo aqui prende a thread principal até a resposta chegar. Só o
++            // TabCompleteEvent, que é síncrono por contrato, volta pra main.
++            return CompletableFuture.supplyAsync(() -> this.tabComplete(sender, args, pos, builder), SUGGESTION_EXECUTOR)
++                .thenApplyAsync(results -> this.suggestions(sender, pos, builder, results), net.minecraft.server.MinecraftServer.getServer());
++        }
++
++        private @Nullable List<String> tabComplete(CommandSender sender, String[] args, Location pos, SuggestionsBuilder builder) {
+             try {
+-                results = this.command.tabComplete(sender, this.literal, args, pos.clone());
+-            } catch (CommandException ex) {
++                return this.command.tabComplete(sender, this.literal, args, pos.clone());
++            } catch (Throwable ex) {
++                // Fora da thread principal o erro só existe dentro do future: sem este catch ele
++                // completa exceptionally e some sem log nenhum.
+                 sender.sendMessage(Component.text("An internal error occurred while attempting to tab-complete this command", NamedTextColor.RED));
+                 Bukkit.getServer().getLogger().log(Level.SEVERE, "Exception when " + sender.getName() + " attempted to tab complete " + builder.getRemaining(), ex);
++                return null;
+             }
++        }
+ 
++        private Suggestions suggestions(CommandSender sender, Location pos, SuggestionsBuilder builder, @Nullable List<String> results) {
++            // Leaf end - async bukkit suggestions
+             if (sender instanceof final Player player) {
+                 TabCompleteEvent tabEvent = new org.bukkit.event.server.TabCompleteEvent(player, builder.getInput(), results != null ? results : new ArrayList<>(), true, pos); // Paper - AsyncTabCompleteEvent
+                 if (!tabEvent.callEvent()) {
+@@ -122,7 +140,7 @@ public class BukkitCommandNode extends LiteralCommandNode<CommandSourceStack> {
+             }
+             // Paper end
+             if (results == null) {
+-                return builder.buildFuture();
++                return builder.build(); // Leaf - async bukkit suggestions; quem devolve o future é o getSuggestions
+             }
+ 
+             // Defaults to sub nodes, but we have just one giant args node, so offset accordingly
+@@ -132,7 +150,7 @@ public class BukkitCommandNode extends LiteralCommandNode<CommandSourceStack> {
+                 builder.suggest(s);
+             }
+ 
+-            return builder.buildFuture();
++            return builder.build(); // Leaf - async bukkit suggestions
+         }
+     }
+ 

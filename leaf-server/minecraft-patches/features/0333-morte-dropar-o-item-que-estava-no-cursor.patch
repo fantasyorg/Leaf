@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 23:36:24 -0300
+Subject: [PATCH] morte: dropar o item que estava no cursor
+
+
+diff --git a/net/minecraft/server/level/ServerPlayer.java b/net/minecraft/server/level/ServerPlayer.java
+index 39c2135abf5696c448be37daed36a069cb726795..50537f5bfe0bf2f83bc47d33f4d074c63d62b597 100644
+--- a/net/minecraft/server/level/ServerPlayer.java
++++ b/net/minecraft/server/level/ServerPlayer.java
+@@ -1205,6 +1205,14 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+                 }
+             }
+         }
++        // RedeFantasy start - drop the cursor item on death
++        // The cursor item is not an inventory slot: nothing above sees it, and the player respawns
++        // on the same entity, so it would ride straight through the death.
++        ItemStack carried = this.containerMenu.getCarried();
++        if (!keepInventory && !carried.isEmpty() && !EnchantmentHelper.has(carried, net.minecraft.world.item.enchantment.EnchantmentEffectComponents.PREVENT_EQUIPMENT_DROP)) {
++            loot.add(new DefaultDrop(carried, stack -> this.drop(stack, org.dreeam.leaf.config.modules.gameplay.DeathItemDropKnockback.dropAround, false, false, null)));
++        }
++        // RedeFantasy end - drop the cursor item on death
+         if (!this.isSpectator() && this.shouldDropLoot(this.level())) { // Paper - fix player loottables running when mob loot gamerule is false
+             // SPIGOT-5071: manually add player loot tables (SPIGOT-5195 - ignores keepInventory rule)
+             this.dropFromLootTable(this.level(), damageSource, this.lastHurtByPlayerMemoryTime > 0);
+@@ -1229,6 +1237,12 @@ public class ServerPlayer extends Player implements ca.spottedleaf.moonrise.patc
+         this.gameEvent(GameEvent.ENTITY_DIE); // moved from the top of this method
+         // Paper end
+ 
++        // RedeFantasy start - drop the cursor item on death
++        // Cleared before the menu close below, which would otherwise drop the same stack again.
++        if (!event.getKeepInventory()) {
++            this.containerMenu.setCarried(ItemStack.EMPTY);
++        }
++        // RedeFantasy end - drop the cursor item on death
+         // SPIGOT-943 - only call if they have an inventory open
+         if (this.containerMenu != this.inventoryMenu) {
+             this.closeContainer(org.bukkit.event.inventory.InventoryCloseEvent.Reason.DEATH); // Paper - Inventory close reason

@@ -1,0 +1,289 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Felipe Paschoal Bergamo <64669985+felipepasc@users.noreply.github.com>
+Date: Fri, 14 Aug 2026 20:11:50 -0300
+Subject: [PATCH] shape cache: so construir colisao e oclusao de um block state
+ quando alguem perguntar
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+O boot materializava colisao, oclusao e o aquecimento do Moonrise para TODO
+block state do registro — MEDIDO no limbo: 141.482 ArrayVoxelShape e 140.032
+BitSetDiscreteVoxelShape, 86,7 MB de heap vivo que um servidor de void nunca
+consulta.
+
+A cauda pesada do initCache vira buildShapeCaches, chamada pelo primeiro leitor
+do state (ensureShapeCaches nos 15 acessores). A guarda buildingShapeCaches
+existe porque Cache e propagatesSkylightDown reentram nos proprios acessores; o
+leitor reentrante ve o fallback de cache nulo, como no vanilla durante o
+initCache. pathType nasce -1 e o WalkNodeEvaluator o calcula no primeiro
+pathfind, o que dispensa o loop initPathType (ele materializava tudo de volta).
+
+DebugLevelSource nao ancora mais a lista de todo block state do jogo: o preset
+de debug e assado no registry em todo boot e a lista so serve se um mundo de
+debug gerar chunk.
+
+-Dleaf.lazyBlockStateCache=false volta o comportamento eager do vanilla.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_017ThTimkw5e5bmBhCfrK7UQ
+
+diff --git a/net/minecraft/world/level/block/Blocks.java b/net/minecraft/world/level/block/Blocks.java
+index c62cd5127acee63f8c62ea2b2591b90076393bd7..e9ea49368bfc9e99fe96aa4bb98c95756e3ccb07 100644
+--- a/net/minecraft/world/level/block/Blocks.java
++++ b/net/minecraft/world/level/block/Blocks.java
+@@ -7311,6 +7311,12 @@ public class Blocks {
+         }
+     }
+     public static void initPathType() {
++        // RedeFantasy start - shape cache sob demanda
++        // O path type consulta colisão de todo state — este loop materializaria os shape caches
++        // inteiros de volta. Sob demanda, quem calcula é o WalkNodeEvaluator no primeiro pathfind
++        // que tocar o state (sentinela -1).
++        if (net.minecraft.world.level.block.state.BlockBehaviour.BlockStateBase.LAZY_SHAPE_CACHE) return;
++        // RedeFantasy end - shape cache sob demanda
+         for (Block block : BuiltInRegistries.BLOCK) {
+             for (BlockState blockState : block.getStateDefinition().getPossibleStates()) {
+                 blockState.initPathType();
+diff --git a/net/minecraft/world/level/block/state/BlockBehaviour.java b/net/minecraft/world/level/block/state/BlockBehaviour.java
+index b326d08dc75d01b35162cda95eda8b18b0feac39..5b39cde6b3ec9a0b3de55ba0b89c2a991dc67393 100644
+--- a/net/minecraft/world/level/block/state/BlockBehaviour.java
++++ b/net/minecraft/world/level/block/state/BlockBehaviour.java
+@@ -472,7 +472,7 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+         private boolean emptyCollisionShape;
+         private boolean emptyConstantCollisionShape;
+         private VoxelShape constantCollisionShape;
+-        public byte pathType; // Leaf - Cache block state tags
++        public byte pathType = (byte) (LAZY_SHAPE_CACHE ? -1 : 0); // Leaf - Cache block state tags // RedeFantasy - shape cache sob demanda: -1 = ainda não calculado
+         public int tagFlag; // Leaf - Cache block state tags
+ 
+         private static void initCaches(final VoxelShape shape, final boolean neighbours) {
+@@ -492,21 +492,25 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+ 
+         @Override
+         public final boolean moonrise$hasCache() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.cache != null;
+         }
+ 
+         @Override
+         public final boolean moonrise$occludesFullBlock() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.occludesFullBlock;
+         }
+ 
+         @Override
+         public final boolean moonrise$emptyCollisionShape() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.emptyCollisionShape;
+         }
+ 
+         @Override
+         public final boolean moonrise$emptyContextCollisionShape() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.emptyConstantCollisionShape;
+         }
+ 
+@@ -522,6 +526,7 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+ 
+         @Override
+         public final VoxelShape moonrise$getConstantContextCollisionShape() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.constantCollisionShape;
+         }
+         // Paper end - optimise collisions
+@@ -578,9 +583,51 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+         }
+ 
+         protected boolean shapeExceedsCube = true; // Paper - moved from actual method to here
++        // RedeFantasy start - shape cache sob demanda
++        // O boot vanilla materializa colisão, oclusão e o aquecimento do Moonrise pra TODO block
++        // state do jogo — dezenas de MB que a maioria dos servidores nunca consulta por inteiro, e
++        // que um servidor de void (limbo, auth) não consulta quase nada. A cauda pesada do
++        // initCache só constrói quando alguém pergunta pelo shape daquele state.
++        // -Dleaf.lazyBlockStateCache=false volta o boot eager do vanilla sem rebuild.
++        public static final boolean LAZY_SHAPE_CACHE = Boolean.parseBoolean(System.getProperty("leaf.lazyBlockStateCache", "true"));
++        private volatile boolean shapeCachesReady;
++        // O build pode reentrar nos leitores do próprio state (Cache/propagatesSkylightDown passam
++        // por eles); a guarda devolve o leitor pro fallback de cache nulo, como no vanilla durante
++        // o initCache.
++        private boolean buildingShapeCaches;
++
++        private void ensureShapeCaches() {
++            if (this.shapeCachesReady) return;
++
++            synchronized (this) {
++                if (this.shapeCachesReady || this.buildingShapeCaches) return;
++
++                this.buildingShapeCaches = true;
++                try {
++                    this.buildShapeCaches();
++                } finally {
++                    this.buildingShapeCaches = false;
++                }
++                this.shapeCachesReady = true;
++            }
++        }
++        // RedeFantasy end - shape cache sob demanda
++
+         public void initCache() {
+             this.fluidState = this.owner.getFluidState(this.asState());
+             this.isRandomlyTicking = this.owner.isRandomlyTicking(this.asState());
++            // Paper start - rewrite chunk system
++            this.isConditionallyFullOpaque = this.canOcclude & this.useShapeForLightOcclusion;
++            // Paper end - rewrite chunk system
++            // RedeFantasy start - shape cache sob demanda
++            if (LAZY_SHAPE_CACHE) return;
++
++            this.buildShapeCaches();
++            this.shapeCachesReady = true;
++        }
++
++        private void buildShapeCaches() {
++            // RedeFantasy end - shape cache sob demanda
+             if (!this.getBlock().hasDynamicShape()) {
+                 this.cache = new BlockBehaviour.BlockStateBase.Cache(this.asState());
+             }
+@@ -603,9 +650,7 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+ 
+             this.propagatesSkylightDown = this.owner.propagatesSkylightDown(this.asState());
+             this.lightBlock = this.owner.getLightBlock(this.asState());
+-            // Paper start - rewrite chunk system
+-            this.isConditionallyFullOpaque = this.canOcclude & this.useShapeForLightOcclusion;
+-            // Paper end - rewrite chunk system
++            // Paper - rewrite chunk system - isConditionallyFullOpaque agora nasce no initCache // RedeFantasy - shape cache sob demanda
+             // Paper start - optimise collisions
+             if (this.cache != null) {
+                 final VoxelShape collisionShape = this.cache.collisionShape;
+@@ -677,6 +722,7 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+ 
+         @Deprecated
+         public boolean isSolid() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.legacySolid;
+         }
+         // Paper start - Protect Bedrock and End Portal/Frames from being destroyed
+@@ -690,22 +736,27 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+         }
+ 
+         public boolean propagatesSkylightDown() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.propagatesSkylightDown;
+         }
+ 
+         public int getLightBlock() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.lightBlock;
+         }
+ 
+         public VoxelShape getFaceOcclusionShape(Direction face) {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.occlusionShapesByFace[face.ordinal()];
+         }
+ 
+         public VoxelShape getOcclusionShape() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.occlusionShape;
+         }
+ 
+         public final boolean hasLargeCollisionShape() { // Paper
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.shapeExceedsCube; // Paper - moved into shape cache init
+         }
+ 
+@@ -791,6 +842,7 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+         }
+ 
+         public boolean isSolidRender() {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.solidRender;
+         }
+ 
+@@ -811,6 +863,7 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+         }
+ 
+         public VoxelShape getCollisionShape(BlockGetter level, BlockPos pos) {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.cache != null ? this.cache.collisionShape : this.getCollisionShape(level, pos, CollisionContext.empty());
+         }
+ 
+@@ -1044,10 +1097,12 @@ public abstract class BlockBehaviour implements FeatureElement, net.caffeinemc.m
+         }
+ 
+         public boolean isFaceSturdy(BlockGetter level, BlockPos pos, Direction face, SupportType supportType) {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.cache != null ? this.cache.isFaceSturdy(face, supportType) : supportType.isSupporting(this.asState(), level, pos, face);
+         }
+ 
+         public boolean isCollisionShapeFullBlock(BlockGetter level, BlockPos pos) {
++            this.ensureShapeCaches(); // RedeFantasy - shape cache sob demanda
+             return this.cache != null ? this.cache.isCollisionShapeFullBlock : this.getBlock().isCollisionShapeFullBlock(this.asState(), level, pos);
+         }
+ 
+diff --git a/net/minecraft/world/level/levelgen/DebugLevelSource.java b/net/minecraft/world/level/levelgen/DebugLevelSource.java
+index f06526e94926a66c549ed19f7fd5eecfb584eee3..d9cd7d7ae18e3fd431cb8e0064ed33aa2c0e54de 100644
+--- a/net/minecraft/world/level/levelgen/DebugLevelSource.java
++++ b/net/minecraft/world/level/levelgen/DebugLevelSource.java
+@@ -34,11 +34,15 @@ public class DebugLevelSource extends ChunkGenerator {
+         instance -> instance.group(RegistryOps.retrieveElement(Biomes.PLAINS)).apply(instance, instance.stable(DebugLevelSource::new))
+     );
+     private static final int BLOCK_MARGIN = 2;
+-    private static final List<BlockState> ALL_BLOCKS = StreamSupport.stream(BuiltInRegistries.BLOCK.spliterator(), false)
+-        .flatMap(block -> block.getStateDefinition().getPossibleStates().stream())
+-        .collect(Collectors.toList());
+-    private static final int GRID_WIDTH = Mth.ceil(Mth.sqrt(ALL_BLOCKS.size()));
+-    private static final int GRID_HEIGHT = Mth.ceil((float)ALL_BLOCKS.size() / GRID_WIDTH);
++    // RedeFantasy start - a lista com todo block state do jogo só nasce se um mundo de debug gerar
++    // chunk de fato; o preset é assado no registry em todo boot, e a lista ancorava ~31 mil states
++    // num servidor que nunca vai usá-la.
++    private static final java.util.function.Supplier<List<BlockState>> ALL_BLOCKS = com.google.common.base.Suppliers.memoize(
++        () -> StreamSupport.stream(BuiltInRegistries.BLOCK.spliterator(), false)
++            .flatMap(block -> block.getStateDefinition().getPossibleStates().stream())
++            .collect(Collectors.toList())
++    );
++    // RedeFantasy end
+     protected static final BlockState AIR = Blocks.AIR.defaultBlockState();
+     protected static final BlockState BARRIER = Blocks.BARRIER.defaultBlockState();
+     public static final int HEIGHT = 70;
+@@ -99,12 +103,17 @@ public class DebugLevelSource extends ChunkGenerator {
+         if (chunkX > 0 && chunkZ > 0 && chunkX % 2 != 0 && chunkZ % 2 != 0) {
+             chunkX /= 2;
+             chunkZ /= 2;
+-            if (chunkX <= GRID_WIDTH && chunkZ <= GRID_HEIGHT) {
+-                int abs = Mth.abs(chunkX * GRID_WIDTH + chunkZ);
+-                if (abs < ALL_BLOCKS.size()) {
+-                    blockState = ALL_BLOCKS.get(abs);
++            // RedeFantasy start - a grade deriva da lista sob demanda; só roda em mundo de debug
++            List<BlockState> allBlocks = ALL_BLOCKS.get();
++            int gridWidth = Mth.ceil(Mth.sqrt(allBlocks.size()));
++            int gridHeight = Mth.ceil((float)allBlocks.size() / gridWidth);
++            if (chunkX <= gridWidth && chunkZ <= gridHeight) {
++                int abs = Mth.abs(chunkX * gridWidth + chunkZ);
++                if (abs < allBlocks.size()) {
++                    blockState = allBlocks.get(abs);
+                 }
+             }
++            // RedeFantasy end
+         }
+ 
+         return blockState;
+diff --git a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+index fc32ab016c3c4cbc17de029734e7f253f6df2372..5823b2d4ac39ed844dc7cc2e3ec462acda751191 100644
+--- a/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
++++ b/net/minecraft/world/level/pathfinder/WalkNodeEvaluator.java
+@@ -483,7 +483,14 @@ public class WalkNodeEvaluator extends NodeEvaluator {
+         if (blockState == null) {
+             return PathType.BLOCKED;
+         }
+-        return PATH_TYPES[blockState.pathType];
++        // RedeFantasy start - shape cache sob demanda: -1 = state que o boot não calculou
++        byte pathType = blockState.pathType;
++        if (pathType < 0) {
++            blockState.initPathType();
++            pathType = blockState.pathType;
++        }
++        return PATH_TYPES[pathType];
++        // RedeFantasy end - shape cache sob demanda
+     }
+     // Leaf end - Cache block state tags
+ 
